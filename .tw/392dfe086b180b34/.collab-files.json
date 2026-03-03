@@ -1,0 +1,16 @@
+[
+  "README.md",
+  ".env.example",
+  ".gitignore",
+  ".prettierrc",
+  "src/config/env.ts",
+  "src/middleware/notFound.ts",
+  "src/middleware/errorHandler.ts",
+  "src/routes/index.ts",
+  "src/app.ts",
+  "src/server.ts",
+  "tsconfig.json",
+  "eslint.config.js",
+  "package.json",
+  "package-lock.json"
+]

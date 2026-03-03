@@ -1,0 +1,26 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "FastAPI: Setup Environment",
+      "type": "shell",
+      "command": "python -m venv .venv && ./.venv/bin/python -m pip install --upgrade pip && ./.venv/bin/python -m pip install -r requirements.txt",
+      "windows": {
+        "command": "python -m venv .venv; .\\.venv\\Scripts\\python.exe -m pip install --upgrade pip; .\\.venv\\Scripts\\python.exe -m pip install -r requirements.txt"
+      },
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "FastAPI: Run Dev Server",
+      "type": "shell",
+      "command": "./.venv/bin/python -m uvicorn main:app --reload",
+      "windows": {
+        "command": ".\\.venv\\Scripts\\python.exe -m uvicorn main:app --reload"
+      },
+      "isBackground": true,
+      "group": "test",
+      "problemMatcher": []
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+[
+  ".gitignore",
+  "README.md",
+  "index.html",
+  "public/vite.svg",
+  "src/assets/react.svg",
+  "src/main.tsx",
+  "src/App.tsx",
+  "src/App.css",
+  "src/index.css",
+  "eslint.config.js",
+  "vite.config.ts",
+  "package.json",
+  "tsconfig.app.json",
+  "tsconfig.node.json",
+  "tsconfig.json"
+]

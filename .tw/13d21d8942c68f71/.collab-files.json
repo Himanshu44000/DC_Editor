@@ -1,0 +1,22 @@
+[
+  ".gitignore",
+  "README.md",
+  "index.html",
+  "public/favicon.svg",
+  "src/assets/react.svg",
+  "src/assets/vite.svg",
+  "src/main.tsx",
+  "src/App.tsx",
+  "src/App.css",
+  "src/index.css",
+  "eslint.config.js",
+  "vite.config.ts",
+  "package.json",
+  "tsconfig.app.json",
+  "tsconfig.node.json",
+  "tsconfig.json",
+  "src/features/tasks/data.ts",
+  "src/features/tasks/TaskRow.tsx",
+  "package-lock.json",
+  "src/features/tasks/types.ts"
+]

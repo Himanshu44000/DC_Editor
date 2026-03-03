@@ -1,0 +1,17 @@
+[
+  "README.md",
+  ".gitignore",
+  "pyproject.toml",
+  "requirements.txt",
+  "requirements-dev.txt",
+  "src/hmm/__init__.py",
+  "src/hmm/app.py",
+  "src/hmm/main.py",
+  "src/hmm/__main__.py",
+  "src/main.py",
+  "tests/test_app.py",
+  ".vscode/extensions.json",
+  ".vscode/settings.json",
+  ".vscode/launch.json",
+  ".vscode/tasks.json"
+]

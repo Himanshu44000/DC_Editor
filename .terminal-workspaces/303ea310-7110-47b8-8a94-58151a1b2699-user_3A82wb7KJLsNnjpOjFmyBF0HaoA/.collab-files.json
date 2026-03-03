@@ -1,0 +1,7 @@
+[
+  "README.md",
+  ".env.example",
+  ".gitignore",
+  "src/server.js",
+  "package.json"
+]

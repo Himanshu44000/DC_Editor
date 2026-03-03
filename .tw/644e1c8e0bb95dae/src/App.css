@@ -1,0 +1,6 @@
+.container { max-width: 820px; margin: 28px auto; padding: 0 16px; }
+.metrics { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 10px; margin-bottom: 14px; }
+.metric { border: 1px solid #2a2a2a; border-radius: 8px; padding: 12px; }
+.form { display: grid; grid-template-columns: 1fr 140px 100px; gap: 8px; margin-bottom: 14px; }
+.list { list-style: none; padding: 0; }
+.list li { display: flex; justify-content: space-between; border-bottom: 1px solid #2a2a2a; padding: 8px 0; }

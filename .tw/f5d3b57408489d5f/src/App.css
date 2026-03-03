@@ -1,0 +1,4 @@
+.wrap { max-width: 760px; margin: 24px auto; padding: 0 16px; }
+.filters { display: flex; gap: 8px; margin-bottom: 12px; }
+.task-row { display: flex; justify-content: space-between; border: 1px solid #2c2c2c; border-radius: 8px; padding: 10px; margin: 8px 0; }
+.done { text-decoration: line-through; opacity: 0.7; }

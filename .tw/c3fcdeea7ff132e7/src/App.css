@@ -1,0 +1,49 @@
+.container {
+  max-width: 900px;
+  margin: 30px auto;
+  padding: 0 16px;
+  font-family: Inter, system-ui, Arial, sans-serif;
+}
+
+.search {
+  width: 100%;
+  padding: 10px;
+  margin: 10px 0 20px;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  background: #0f172a;
+  color: #fff;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.card {
+  border: 1px solid #2a2a2a;
+  border-radius: 10px;
+  padding: 14px;
+  background: #111827;
+}
+
+.card h3 {
+  margin: 0 0 8px;
+}
+
+.card p {
+  margin: 4px 0;
+}
+
+.card button {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.summary {
+  margin-top: 16px;
+}
