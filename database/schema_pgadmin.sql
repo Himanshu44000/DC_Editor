@@ -38,6 +38,10 @@ CREATE TABLE collab_users (
   email TEXT UNIQUE NOT NULL,
   name TEXT NOT NULL,
   avatar_url TEXT,
+  bio TEXT,
+  pronouns TEXT,
+  company TEXT,
+  location TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   last_active_at TIMESTAMPTZ DEFAULT NOW()

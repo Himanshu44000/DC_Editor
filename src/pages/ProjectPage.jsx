@@ -7,6 +7,67 @@ import { useAuth } from '../context/AuthContext'
 import FileTree from '../components/FileTree'
 import Terminal from '../components/Terminal'
 import InteractiveConsole from '../components/InteractiveConsole'
+import VoiceChannelPanel from '../components/VoiceChannelPanel'
+
+const DEFAULT_AVATAR_PATH = '/branding/defaultAvatar.png'
+const TYPING_ACTIVE_WINDOW_MS = 6000
+const TYPING_SIGNAL_WINDOW_MS = 1800
+const COLLAB_ACK_TIMEOUT_MS = 2500
+const CURSOR_COLORS = ['#60a5fa', '#34d399', '#f59e0b', '#f472b6', '#a78bfa', '#22d3ee', '#fb7185', '#f97316']
+
+const pickCursorColor = (userId = '') => {
+  const source = String(userId || '')
+  let hash = 0
+  for (let index = 0; index < source.length; index += 1) {
+    hash = (hash * 31 + source.charCodeAt(index)) | 0
+  }
+  const offset = Math.abs(hash) % CURSOR_COLORS.length
+  return CURSOR_COLORS[offset]
+}
+
+const chatMessageKey = (message) => String(message?.id || message?.clientMessageId || '').trim()
+
+const mergeChatMessages = (snapshotChat, previousChat) => {
+  const normalizedSnapshot = Array.isArray(snapshotChat) ? snapshotChat : []
+  const normalizedPrevious = Array.isArray(previousChat) ? previousChat : []
+
+  if (!normalizedPrevious.length) return normalizedSnapshot
+
+  const mergedByKey = new Map()
+  const fallbackItems = []
+
+  for (const message of normalizedSnapshot) {
+    const key = chatMessageKey(message)
+    if (key) {
+      mergedByKey.set(key, message)
+    } else {
+      fallbackItems.push(message)
+    }
+  }
+
+  for (const message of normalizedPrevious) {
+    const key = chatMessageKey(message)
+    if (key) {
+      if (!mergedByKey.has(key)) {
+        mergedByKey.set(key, message)
+      }
+      continue
+    }
+    fallbackItems.push(message)
+  }
+
+  const merged = [...mergedByKey.values(), ...fallbackItems]
+  merged.sort((a, b) => {
+    const aTime = Date.parse(String(a?.createdAt || ''))
+    const bTime = Date.parse(String(b?.createdAt || ''))
+    if (Number.isFinite(aTime) && Number.isFinite(bTime) && aTime !== bTime) {
+      return aTime - bTime
+    }
+    return String(chatMessageKey(a) || '').localeCompare(String(chatMessageKey(b) || ''))
+  })
+
+  return merged
+}
 
 const normalizePath = (value = '') =>
   String(value)
@@ -272,11 +333,13 @@ const ProjectPage = () => {
   const monacoRef = useRef(null)
   const editorRef = useRef(null)
   const practiceFileInputRef = useRef(null)
-  const pendingFileUpdateTimersRef = useRef(new Map())
-  const pendingFileUpdatePayloadRef = useRef(new Map())
   const editorFocusedRef = useRef(false)
   const selectedFileIdRef = useRef(null)
   const typingGuardUntilRef = useRef(0)
+  const latestLocalEditAtRef = useRef(new Map())
+  const latestLocalEditVersionRef = useRef(new Map())
+  const collabLastIssueAtRef = useRef(new Map())
+  const disconnectWarnTimerRef = useRef(null)
   const latestProjectIdRef = useRef(projectId)
   const latestTokenRef = useRef(token)
 
@@ -284,6 +347,26 @@ const ProjectPage = () => {
     latestProjectIdRef.current = projectId
     latestTokenRef.current = token
   }, [projectId, token])
+
+  const reportCollabIssue = useCallback((message, details) => {
+    const issueKey = String(message || 'unknown')
+    const nowMs = Date.now()
+    const previousAt = Number(collabLastIssueAtRef.current.get(issueKey) || 0)
+    if (nowMs - previousAt < 1000) return
+    collabLastIssueAtRef.current.set(issueKey, nowMs)
+
+    if (details) {
+      console.warn('[collab]', message, details)
+    } else {
+      console.warn('[collab]', message)
+    }
+  }, [])
+
+  useEffect(() => {
+    latestLocalEditAtRef.current.clear()
+    latestLocalEditVersionRef.current.clear()
+    typingGuardUntilRef.current = 0
+  }, [projectId])
 
   const selectedFile = useMemo(() => {
     if (!selectedFileId) return null
@@ -786,12 +869,23 @@ const ProjectPage = () => {
           const previousFile = previousById.get(incomingFile.id)
           if (!previousFile || incomingFile.isBinary) return incomingFile
 
-          const isCurrentlyEditingThisFile =
-            editorFocusedRef.current && selectedFileIdRef.current && selectedFileIdRef.current === incomingFile.id
-          const hasPendingLocalUpdate = pendingFileUpdatePayloadRef.current.has(incomingFile.id)
+          const previousUpdatedAtMs = Date.parse(String(previousFile.updatedAt || ''))
+          const incomingUpdatedAtMs = Date.parse(String(incomingFile.updatedAt || ''))
+          if (
+            Number.isFinite(previousUpdatedAtMs) &&
+            Number.isFinite(incomingUpdatedAtMs) &&
+            incomingUpdatedAtMs < previousUpdatedAtMs
+          ) {
+            return {
+              ...incomingFile,
+              content: previousFile.content ?? incomingFile.content,
+              updatedAt: previousFile.updatedAt || incomingFile.updatedAt,
+            }
+          }
+
           const shouldProtectWhileTyping = typingGuardActive && selectedFileIdRef.current === incomingFile.id
 
-          if (isCurrentlyEditingThisFile || hasPendingLocalUpdate || shouldProtectWhileTyping) {
+          if (shouldProtectWhileTyping) {
             return {
               ...incomingFile,
               content: previousFile.content ?? incomingFile.content,
@@ -803,7 +897,7 @@ const ProjectPage = () => {
         })
       })
       setFolders(normalizedSnapshot?.folders || [])
-      setChat(normalizedSnapshot?.chat || [])
+      setChat((prev) => mergeChatMessages(normalizedSnapshot?.chat, prev))
       // Maintain current file selection if it still exists, otherwise keep the selection
       setSelectedFileId((prev) => {
         // If something is currently selected, keep it
@@ -834,29 +928,61 @@ const ProjectPage = () => {
       setSelectedFileId((prev) => (prev === fileId ? null : prev))
     }
 
-    const onUpdated = ({ fileId, content, updatedAt }) => {
-      const typingGuardActive = Date.now() < Number(typingGuardUntilRef.current || 0)
-      if (typingGuardActive && selectedFileIdRef.current && selectedFileIdRef.current === fileId) {
-        return
-      }
+    const onUpdated = ({ fileId, content, updatedAt, clientUpdatedAt, userId: eventUserId }) => {
+      const incomingUpdatedAtMs = Date.parse(String(updatedAt || ''))
+      const incomingClientVersion = Number(clientUpdatedAt)
 
       setFiles((prev) =>
         prev.map((file) =>
           file.id === fileId
-            ? {
-                ...file,
-                content,
-                updatedAt,
-              }
+            ? (() => {
+                const previousUpdatedAtMs = Date.parse(String(file.updatedAt || ''))
+                const latestLocalVersion = Number(latestLocalEditVersionRef.current.get(fileId) || 0)
+                const isOwnEcho = String(eventUserId || '') === String(user?.id || '')
+
+                if (
+                  Number.isFinite(previousUpdatedAtMs) &&
+                  Number.isFinite(incomingUpdatedAtMs) &&
+                  incomingUpdatedAtMs < previousUpdatedAtMs
+                ) {
+                  return file
+                }
+
+                if (
+                  isOwnEcho &&
+                  Number.isFinite(incomingClientVersion) &&
+                  latestLocalVersion > 0 &&
+                  incomingClientVersion <= latestLocalVersion
+                ) {
+                  return file
+                }
+
+                return {
+                  ...file,
+                  content,
+                  updatedAt,
+                }
+              })()
             : file,
         ),
       )
     }
 
-    const onCursorUpdated = ({ fileId, position, userId, userName }) => {
+    const onCursorUpdated = ({ fileId, position, userId, userName, avatarUrl, isTyping }) => {
+      if (String(userId || '') === String(user?.id || '')) return
+      if (!isTyping) return
+
       setRemoteCursors((prev) => ({
         ...prev,
-        [userId]: { userName, fileId, position },
+        [userId]: {
+          userName,
+          fileId,
+          position,
+          avatarUrl: String(avatarUrl || '').trim(),
+          color: pickCursorColor(userId),
+          lastActiveAt: Date.now(),
+          isTyping: true,
+        },
       }))
     }
 
@@ -876,6 +1002,20 @@ const ProjectPage = () => {
 
     const onSocketError = (payload) => {
       setError(payload?.message || 'Operation failed')
+    }
+
+    const onDisconnect = (reason) => {
+      const normalizedReason = String(reason || '').trim().toLowerCase()
+      if (normalizedReason === 'io client disconnect') return
+
+      if (disconnectWarnTimerRef.current) {
+        window.clearTimeout(disconnectWarnTimerRef.current)
+      }
+
+      disconnectWarnTimerRef.current = window.setTimeout(() => {
+        if (socket.connected) return
+        reportCollabIssue(`Realtime disconnected: ${String(reason || 'unknown_reason')}`)
+      }, 1800)
     }
 
     const onProjectDeleted = ({ projectId: deletedProjectId }) => {
@@ -903,12 +1043,21 @@ const ProjectPage = () => {
       refreshedSocket?.connect()
     }
 
-    if (socket.connected) {
+    const onConnect = () => {
+      if (disconnectWarnTimerRef.current) {
+        window.clearTimeout(disconnectWarnTimerRef.current)
+        disconnectWarnTimerRef.current = null
+      }
       joinProjectRoom()
     }
 
-    socket.on('connect', joinProjectRoom)
+    if (socket.connected) {
+      onConnect()
+    }
+
+    socket.on('connect', onConnect)
     socket.on('connect_error', onConnectError)
+    socket.on('disconnect', onDisconnect)
     socket.on('project:snapshot', onSnapshot)
     socket.on('file:created', onCreated)
     socket.on('file:renamed', onRenamed)
@@ -921,8 +1070,13 @@ const ProjectPage = () => {
     socket.on('project:access-removed', onProjectAccessRemoved)
 
     return () => {
-      socket.off('connect', joinProjectRoom)
+      if (disconnectWarnTimerRef.current) {
+        window.clearTimeout(disconnectWarnTimerRef.current)
+        disconnectWarnTimerRef.current = null
+      }
+      socket.off('connect', onConnect)
       socket.off('connect_error', onConnectError)
+      socket.off('disconnect', onDisconnect)
       socket.off('project:snapshot', onSnapshot)
       socket.off('file:created', onCreated)
       socket.off('file:renamed', onRenamed)
@@ -950,35 +1104,6 @@ const ProjectPage = () => {
     }
   }, [])
 
-  useEffect(() => {
-    const timersRef = pendingFileUpdateTimersRef.current
-    const payloadRef = pendingFileUpdatePayloadRef.current
-
-    return () => {
-      for (const timerId of timersRef.values()) {
-        clearTimeout(timerId)
-      }
-      const projectIdValue = latestProjectIdRef.current
-      const tokenValue = latestTokenRef.current
-      if (projectIdValue && tokenValue) {
-        const socket = getSocket(tokenValue)
-        if (socket) {
-          for (const pendingPayload of payloadRef.values()) {
-            if (!pendingPayload) continue
-            socket.emit('file:update', {
-              projectId: pendingPayload.projectId || projectIdValue,
-              fileId: pendingPayload.fileId,
-              content: pendingPayload.content ?? '',
-              clientUpdatedAt: pendingPayload.clientUpdatedAt || Date.now(),
-            })
-          }
-        }
-      }
-      timersRef.clear()
-      payloadRef.clear()
-    }
-  }, [])
-
   const emit = useCallback((eventName, payload) => {
     const socket = getSocket(token)
     if (socket) {
@@ -989,31 +1114,55 @@ const ProjectPage = () => {
   const queueFileUpdate = useCallback(
     (fileId, content) => {
       if (!fileId) return
-      const clientUpdatedAt = Date.now()
 
-      pendingFileUpdatePayloadRef.current.set(fileId, {
+      const previousVersion = Number(latestLocalEditVersionRef.current.get(fileId) || 0)
+      // Use a monotonic clock-based version so reconnects do not restart at 1 and get rejected as stale.
+      const nowVersion = Date.now()
+      const nextVersion = Math.max(nowVersion, previousVersion + 1)
+      latestLocalEditVersionRef.current.set(fileId, nextVersion)
+
+      const socket = getSocket(token)
+      if (!socket) {
+        reportCollabIssue('Socket unavailable while sending file update.')
+        return
+      }
+
+      const shouldTrackAck = Boolean(socket.connected)
+
+      let hasAck = false
+      const ackTimeout = shouldTrackAck
+        ? window.setTimeout(() => {
+            if (hasAck) return
+            reportCollabIssue('File update timed out waiting for server acknowledgement.', {
+              projectId,
+              fileId,
+              clientUpdatedAt: nextVersion,
+              socketConnected: socket.connected,
+              socketId: socket.id || null,
+            })
+          }, COLLAB_ACK_TIMEOUT_MS)
+        : null
+
+      socket.emit('file:update', {
         projectId,
         fileId,
         content,
-        clientUpdatedAt,
+        clientUpdatedAt: nextVersion,
+      }, (ack) => {
+        hasAck = true
+        if (ackTimeout) {
+          window.clearTimeout(ackTimeout)
+        }
+        if (!ack || ack.ok !== false) return
+        reportCollabIssue(`File update rejected: ${ack.reason || 'unknown_reason'}`, {
+          projectId,
+          fileId,
+          clientUpdatedAt: nextVersion,
+          ack,
+        })
       })
-
-      const existingTimer = pendingFileUpdateTimersRef.current.get(fileId)
-      if (existingTimer) {
-        clearTimeout(existingTimer)
-      }
-
-      const nextTimer = setTimeout(() => {
-        const payload = pendingFileUpdatePayloadRef.current.get(fileId)
-        pendingFileUpdatePayloadRef.current.delete(fileId)
-        pendingFileUpdateTimersRef.current.delete(fileId)
-        if (!payload) return
-        emit('file:update', payload)
-      }, 220)
-
-      pendingFileUpdateTimersRef.current.set(fileId, nextTimer)
     },
-    [emit, projectId],
+    [projectId, token, reportCollabIssue],
   )
 
   const createFile = (targetFolderPath = selectedFolderPath, fileName = '') => {
@@ -1168,8 +1317,23 @@ const ProjectPage = () => {
     if (!selectedFile || !canEdit) return
 
     const nextContent = value ?? ''
-    typingGuardUntilRef.current = Date.now() + 1400
-    setFiles((prev) => prev.map((file) => (file.id === selectedFile.id ? { ...file, content: nextContent } : file)))
+    if (nextContent === String(selectedFile.content ?? '')) return
+
+    const localEditAt = Date.now()
+    const localUpdatedAt = new Date(localEditAt).toISOString()
+    latestLocalEditAtRef.current.set(selectedFile.id, localEditAt)
+    typingGuardUntilRef.current = Date.now() + 120
+    setFiles((prev) =>
+      prev.map((file) =>
+        file.id === selectedFile.id
+          ? {
+              ...file,
+              content: nextContent,
+              updatedAt: localUpdatedAt,
+            }
+          : file,
+      ),
+    )
     queueFileUpdate(selectedFile.id, nextContent)
   }
 
@@ -1192,11 +1356,43 @@ const ProjectPage = () => {
       },
     ])
 
-    emit('chat:send', {
+    const socket = getSocket(token)
+    if (!socket) {
+      reportCollabIssue('Socket unavailable while sending chat message.')
+      return
+    }
+
+    const shouldTrackAck = Boolean(socket.connected)
+
+    let hasAck = false
+    const ackTimeout = shouldTrackAck
+      ? window.setTimeout(() => {
+          if (hasAck) return
+          reportCollabIssue('Chat send timed out waiting for server acknowledgement.', {
+            projectId,
+            clientMessageId,
+            socketConnected: socket.connected,
+            socketId: socket.id || null,
+          })
+        }, COLLAB_ACK_TIMEOUT_MS)
+      : null
+
+    socket.emit('chat:send', {
       projectId,
       message,
       clientMessageId,
       userName: user?.name || '',
+    }, (ack) => {
+      hasAck = true
+      if (ackTimeout) {
+        window.clearTimeout(ackTimeout)
+      }
+      if (!ack || ack.ok !== false) return
+      reportCollabIssue(`Chat send rejected: ${ack.reason || 'unknown_reason'}`, {
+        projectId,
+        clientMessageId,
+        ack,
+      })
     })
     setChatInput('')
   }
@@ -1397,7 +1593,12 @@ const ProjectPage = () => {
   }
 
   const handleCursorChange = (event) => {
-    if (!selectedFile) return
+    if (!selectedFile || !canEdit) return
+
+    const lastLocalEditAt = Number(latestLocalEditAtRef.current.get(selectedFile.id) || 0)
+    const isTyping = Date.now() - lastLocalEditAt <= TYPING_SIGNAL_WINDOW_MS
+    if (!isTyping) return
+
     emit('cursor:update', {
       projectId,
       fileId: selectedFile.id,
@@ -1405,6 +1606,7 @@ const ProjectPage = () => {
         lineNumber: event.position?.lineNumber,
         column: event.position?.column,
       },
+      isTyping,
     })
   }
 
@@ -1447,6 +1649,64 @@ const ProjectPage = () => {
 
     return selectedVariant ? `${baseName} (${selectedVariant.label})` : baseName
   }, [project?.templateId, project?.templateVariantId, project?.language, templateCatalog])
+
+  const visibleRemoteCursors = Object.entries(remoteCursors).filter(
+    ([remoteUserId, value]) =>
+      value.fileId === selectedFile?.id && String(remoteUserId || '') !== String(user?.id || ''),
+  )
+
+  const activeTypingUsers = useMemo(() => {
+    const now = Date.now()
+
+    return Object.entries(remoteCursors)
+      .map(([remoteUserId, value]) => {
+        const fileName = files.find((file) => file.id === value.fileId)?.name || 'Unknown file'
+        return {
+          userId: remoteUserId,
+          userName: String(value.userName || 'User').trim() || 'User',
+          fileId: value.fileId,
+          fileName,
+          avatarUrl: String(value.avatarUrl || '').trim(),
+          color: String(value.color || pickCursorColor(remoteUserId)),
+          lastActiveAt: Number(value.lastActiveAt || 0),
+          position: value.position || null,
+          isTyping: Boolean(value.isTyping),
+        }
+      })
+      .filter(
+        (entry) =>
+          String(entry.userId || '') !== String(user?.id || '') &&
+          entry.isTyping &&
+          now - entry.lastActiveAt <= TYPING_ACTIVE_WINDOW_MS,
+      )
+      .sort((a, b) => b.lastActiveAt - a.lastActiveAt)
+  }, [remoteCursors, files, user?.id])
+
+  useEffect(() => {
+    if (activeTypingUsers.length === 0) return undefined
+
+    const timerId = window.setInterval(() => {
+      const cutoff = Date.now() - TYPING_ACTIVE_WINDOW_MS
+      setRemoteCursors((prev) => {
+        let changed = false
+        const next = {}
+
+        for (const [remoteUserId, entry] of Object.entries(prev)) {
+          if (Number(entry?.lastActiveAt || 0) < cutoff) {
+            changed = true
+            continue
+          }
+          next[remoteUserId] = entry
+        }
+
+        return changed ? next : prev
+      })
+    }, 1200)
+
+    return () => {
+      window.clearInterval(timerId)
+    }
+  }, [activeTypingUsers.length])
 
   const handleOpenLivePreview = async () => {
     if (!projectId || !isWebVanillaTemplate) return
@@ -1596,7 +1856,7 @@ const ProjectPage = () => {
               height="60vh"
               path={selectedFile?.path || selectedFile?.name || 'main.tsx'}
               language={languageForFile(selectedFile?.name ?? '', project?.language)}
-              defaultValue={selectedFile?.content ?? ''}
+              value={selectedFile?.content ?? ''}
               onChange={onEditorChange}
               onMount={(editor, monaco) => {
                 editorRef.current = editor
@@ -1648,9 +1908,6 @@ const ProjectPage = () => {
     )
   }
 
-  // Full Project Mode - Complete IDE experience
-  const visibleRemoteCursors = Object.entries(remoteCursors).filter(([, value]) => value.fileId === selectedFile?.id)
-
   return (
     <>
       <section className="project-page project-mode">
@@ -1695,13 +1952,36 @@ const ProjectPage = () => {
             <strong>{selectedFile?.name ?? 'No file selected'}</strong>
             <span className="role-note">Template: {templateDisplayName}</span>
           </div>
-          {isWebVanillaTemplate && (
-            <div className="run-controls">
-              <button type="button" onClick={handleOpenLivePreview} disabled={isOpeningLivePreview}>
-                {isOpeningLivePreview ? 'Opening...' : '🌐 Live'}
-              </button>
+          <div className="editor-head-side">
+            <div className="typing-presence">
+              {activeTypingUsers.length > 0 && (
+                <div className="typing-presence-chips">
+                  {activeTypingUsers.slice(0, 4).map((entry) => (
+                    <div key={entry.userId} className="typing-chip" style={{ borderColor: entry.color }}>
+                      <img
+                        src={entry.avatarUrl || DEFAULT_AVATAR_PATH}
+                        alt={`${entry.userName} avatar`}
+                        onError={(event) => {
+                          event.currentTarget.src = DEFAULT_AVATAR_PATH
+                        }}
+                      />
+                      <span>{`${entry.userName} is typing in ${entry.fileName}`}</span>
+                    </div>
+                  ))}
+                  {activeTypingUsers.length > 4 && (
+                    <div className="typing-chip typing-chip-more">+{activeTypingUsers.length - 4}</div>
+                  )}
+                </div>
+              )}
             </div>
-          )}
+            {isWebVanillaTemplate && (
+              <div className="run-controls">
+                <button type="button" onClick={handleOpenLivePreview} disabled={isOpeningLivePreview}>
+                  {isOpeningLivePreview ? 'Opening...' : '🌐 Live'}
+                </button>
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="editor-workspace">
@@ -1720,7 +2000,7 @@ const ProjectPage = () => {
               height="100%"
               path={selectedFile?.path || selectedFile?.name || 'main.tsx'}
               language={languageForFile(selectedFile?.name ?? '', project?.language)}
-              defaultValue={selectedFile?.content ?? ''}
+              value={selectedFile?.content ?? ''}
               onChange={onEditorChange}
               options={{
                 minimap: { enabled: false },
@@ -1771,6 +2051,8 @@ const ProjectPage = () => {
       </div>
 
       <aside className="panel chat-panel">
+        <VoiceChannelPanel projectId={projectId} getAuthToken={getAuthToken} />
+
         {isOwner && (
           <div className="invite-box stack-sm">
             <label className="shared-terminal-toggle">

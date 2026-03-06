@@ -12,6 +12,8 @@ import { Client } from 'pg'
 import os from 'node:os'
 import fs from 'fs'
 import path from 'path'
+import JSZip from 'jszip'
+import { AccessToken, RoomServiceClient } from 'livekit-server-sdk'
 import { enqueueExecutionJob } from './queue/executionQueue.js'
 import { isRedisConfigured } from './queue/redis.js'
 import { configureCloudinary, isCloudinaryConfigured } from './storage/cloudinaryClient.js'
@@ -61,6 +63,40 @@ const CLERK_CLOCK_SKEW_MS = Math.max(0, Number(process.env.CLERK_CLOCK_SKEW_MS |
 const DATABASE_URL = process.env.DATABASE_URL
 const USE_DOCKER = process.env.USE_DOCKER === 'true'
 const USE_EXECUTION_QUEUE = process.env.USE_EXECUTION_QUEUE === 'true'
+const LIVEKIT_URL = String(process.env.LIVEKIT_URL || '').trim()
+const LIVEKIT_API_KEY = String(process.env.LIVEKIT_API_KEY || '').trim()
+const LIVEKIT_API_SECRET = String(process.env.LIVEKIT_API_SECRET || '').trim()
+const GITHUB_CLIENT_ID = String(process.env.GITHUB_CLIENT_ID || '').trim()
+const GITHUB_CLIENT_SECRET = String(process.env.GITHUB_CLIENT_SECRET || '').trim()
+const GITHUB_OAUTH_CALLBACK_URL = String(process.env.GITHUB_OAUTH_CALLBACK_URL || 'http://localhost:4000/api/github/oauth/callback').trim()
+const FRONTEND_BASE_URL = String(process.env.FRONTEND_BASE_URL || 'http://localhost:5173').trim()
+const GITHUB_DEFAULT_COMMIT_MESSAGE = 'Initial upload from DC Editor'
+
+const toLiveKitApiUrl = (value = '') => {
+  const normalized = String(value || '').trim()
+  if (!normalized) return ''
+  if (/^wss?:\/\//i.test(normalized)) {
+    return normalized.replace(/^ws/i, 'http')
+  }
+  return normalized
+}
+
+const normalizeRealtimeAvatarUrl = (value = '') => {
+  const normalized = String(value || '').trim()
+  if (!normalized) return ''
+  // Data URLs can make JWT metadata too large and break websocket handshake.
+  if (normalized.startsWith('data:')) return ''
+  if (normalized.length > 1024) return ''
+  return normalized
+}
+
+const normalizeAvatarForUi = (value = '') => {
+  const normalized = String(value || '').trim()
+  if (!normalized) return ''
+  // Keep responses bounded, but allow data URLs for profile avatars in UI.
+  if (normalized.length > 2 * 1024 * 1024) return ''
+  return normalized
+}
 
 app.use(cors())
 app.use(express.json({ limit: '15mb' }))
@@ -75,16 +111,45 @@ if (CLERK_SECRET_KEY) {
 
 const users = new Map()
 const usersByEmail = new Map()
+const githubOauthStates = new Map()
 const projects = new Map()
 const invitations = new Map()
 const terminalSessions = new Map()
 const terminalDisconnectStopTimers = new Map()
 const livePreviewSessions = new Map()
 const executionJobs = new Map()
+const pendingProjectPersistTimers = new Map()
+const pendingWorkspaceFileSyncTimers = new Map()
+const PROJECT_PERSIST_DEBOUNCE_MS = 900
+const WORKSPACE_FILE_SYNC_DEBOUNCE_MS = 40
 const TERMINAL_WORKSPACES_ROOT = path.join(process.cwd(), '.tw')
 const LOCAL_STATE_PATH = path.join(process.cwd(), '.collab-state.json')
 const LIVE_PREVIEW_SESSION_TTL_MS = 1000 * 60 * 60 * 6
 let dbClient = null
+
+const scheduleProjectPersist = (projectId, delayMs = PROJECT_PERSIST_DEBOUNCE_MS) => {
+  const normalizedProjectId = String(projectId || '').trim()
+  if (!normalizedProjectId) return
+
+  const existing = pendingProjectPersistTimers.get(normalizedProjectId)
+  if (existing) {
+    clearTimeout(existing)
+  }
+
+  const timerId = setTimeout(async () => {
+    pendingProjectPersistTimers.delete(normalizedProjectId)
+    const project = projects.get(normalizedProjectId)
+    if (!project) return
+
+    try {
+      await persistProject(project)
+    } catch (error) {
+      console.error('Debounced project persist failed:', error)
+    }
+  }, Math.max(0, Number(delayMs) || PROJECT_PERSIST_DEBOUNCE_MS))
+
+  pendingProjectPersistTimers.set(normalizedProjectId, timerId)
+}
 
 const SERVER_ROOT = path.dirname(fileURLToPath(import.meta.url))
 const TEMPLATE_ROOT = path.join(SERVER_ROOT, 'templates')
@@ -2726,6 +2791,28 @@ const syncFileToActiveWorkspaces = (projectId, filePath, content) => {
   }
 }
 
+const scheduleFileSyncToActiveWorkspaces = (projectId, filePath, content) => {
+  const normalizedPath = normalizePath(filePath)
+  if (!isValidProjectRelativePath(normalizedPath)) return
+
+  const key = `${projectId}::${normalizedPath}`
+  const existingTimer = pendingWorkspaceFileSyncTimers.get(key)
+  if (existingTimer) {
+    clearTimeout(existingTimer)
+  }
+
+  const timer = setTimeout(() => {
+    pendingWorkspaceFileSyncTimers.delete(key)
+    try {
+      syncFileToActiveWorkspaces(projectId, normalizedPath, content)
+    } catch (syncError) {
+      void syncError
+    }
+  }, WORKSPACE_FILE_SYNC_DEBOUNCE_MS)
+
+  pendingWorkspaceFileSyncTimers.set(key, timer)
+}
+
 const removeFileFromActiveWorkspaces = (projectId, filePath) => {
   const normalizedPath = normalizePath(filePath)
   if (!normalizedPath) return
@@ -3009,15 +3096,42 @@ const persistUser = async (user) => {
     return
   }
   await dbClient.query(
-    `INSERT INTO collab_users (id, clerk_id, email, name, updated_at, last_active_at)
-     VALUES ($1, $2, $3, $4, NOW(), NOW())
+    `INSERT INTO collab_users (
+       id, clerk_id, email, name, avatar_url, bio, pronouns, company, location,
+       github_username, github_access_token, github_token_scope, github_connected_at,
+       updated_at, last_active_at
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())
      ON CONFLICT (id) DO UPDATE SET
        clerk_id = EXCLUDED.clerk_id,
        email = EXCLUDED.email,
        name = EXCLUDED.name,
+       avatar_url = EXCLUDED.avatar_url,
+       bio = EXCLUDED.bio,
+       pronouns = EXCLUDED.pronouns,
+       company = EXCLUDED.company,
+       location = EXCLUDED.location,
+       github_username = EXCLUDED.github_username,
+       github_access_token = EXCLUDED.github_access_token,
+       github_token_scope = EXCLUDED.github_token_scope,
+       github_connected_at = EXCLUDED.github_connected_at,
        updated_at = NOW(),
        last_active_at = NOW()`,
-    [user.id, user.id, user.email, user.name],
+    [
+      user.id,
+      user.id,
+      user.email,
+      user.name,
+      String(user.avatarUrl || ''),
+      String(user.bio || ''),
+      String(user.pronouns || ''),
+      String(user.company || ''),
+      String(user.location || ''),
+      String(user.githubUsername || ''),
+      String(user.githubAccessToken || ''),
+      String(user.githubTokenScope || ''),
+      user.githubConnectedAt || null,
+    ],
   )
 }
 
@@ -3206,12 +3320,17 @@ const persistProject = async (project) => {
     return
   }
 
-  await dbClient.query('BEGIN')
+  // Use an isolated client for this transaction so concurrent requests cannot
+  // interleave statements into the same transaction context.
+  const transactionClient = new Client({ connectionString: DATABASE_URL })
+  await transactionClient.connect()
+
+  await transactionClient.query('BEGIN')
   try {
     const createdAt = project.createdAt || nowIso()
     const updatedAt = project.updatedAt || nowIso()
 
-    await dbClient.query(
+    await transactionClient.query(
       `INSERT INTO collab_projects (id, owner_id, name, language, template_type, created_at, updated_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (id) DO UPDATE SET
@@ -3223,11 +3342,11 @@ const persistProject = async (project) => {
       [project.id, project.ownerId, project.name, project.language, project.templateId || null, createdAt, updatedAt],
     )
 
-    await dbClient.query('DELETE FROM collab_project_members WHERE project_id = $1', [project.id])
+    await transactionClient.query('DELETE FROM collab_project_members WHERE project_id = $1', [project.id])
     for (const memberId of project.members) {
       const role = project.memberRoles.get(memberId) || 'collaborator'
       const dbRole = mapAppRoleToDbRole(role, memberId === project.ownerId)
-      await dbClient.query(
+      await transactionClient.query(
         `INSERT INTO collab_project_members (id, project_id, user_id, role_id, joined_at, invited_by)
          VALUES ($1, $2, $3, $4, $5, $6)
          ON CONFLICT (project_id, user_id) DO UPDATE SET
@@ -3243,32 +3362,34 @@ const persistProject = async (project) => {
       )
     }
 
-    await dbClient.query('DELETE FROM collab_folders WHERE project_id = $1', [project.id])
+    await transactionClient.query('DELETE FROM collab_folders WHERE project_id = $1', [project.id])
 
     const folderIdByPath = new Map()
-    const sortedFolders = Array.from(project.folders || [])
+    const sortedFolders = Array.from(
+      new Set(
+        Array.from(project.folders || [])
       .map(normalizePath)
-      .filter((folderPath) => isValidProjectRelativePath(folderPath))
-      .sort((a, b) => a.localeCompare(b))
+      .filter((folderPath) => isValidProjectRelativePath(folderPath)),
+      ),
+    ).sort((a, b) => {
+      const depthDiff = a.split('/').length - b.split('/').length
+      if (depthDiff !== 0) return depthDiff
+      return a.localeCompare(b)
+    })
 
+    // Phase 1: ensure every folder row exists with a stable DB id.
     for (const folderPath of sortedFolders) {
-      const folderId = randomUUID()
-      folderIdByPath.set(folderPath, folderId)
-
-      const parentPath = getParentFolderPath(folderPath)
-      const parentFolderId = parentPath ? folderIdByPath.get(parentPath) || null : null
-
-      await dbClient.query(
+      const upsertResult = await transactionClient.query(
         `INSERT INTO collab_folders (id, project_id, parent_folder_id, folder_name, folder_path, created_by, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         VALUES ($1, $2, NULL, $3, $4, $5, $6, $7)
          ON CONFLICT (project_id, folder_path) DO UPDATE SET
-           parent_folder_id = EXCLUDED.parent_folder_id,
            folder_name = EXCLUDED.folder_name,
-           updated_at = EXCLUDED.updated_at`,
+           parent_folder_id = NULL,
+           updated_at = EXCLUDED.updated_at
+         RETURNING id`,
         [
-          folderId,
+          randomUUID(),
           project.id,
-          parentFolderId,
           getFileName(folderPath),
           folderPath,
           project.ownerId,
@@ -3276,9 +3397,28 @@ const persistProject = async (project) => {
           updatedAt,
         ],
       )
+
+      const persistedFolderId = upsertResult.rows?.[0]?.id
+      if (persistedFolderId) {
+        folderIdByPath.set(folderPath, persistedFolderId)
+      }
     }
 
-    await dbClient.query('DELETE FROM collab_files WHERE project_id = $1', [project.id])
+    // Phase 2: set parent links now that all folder ids are known.
+    for (const folderPath of sortedFolders) {
+      const parentPath = getParentFolderPath(folderPath)
+      const parentFolderId = parentPath ? folderIdByPath.get(parentPath) || null : null
+
+      await transactionClient.query(
+        `UPDATE collab_folders
+         SET parent_folder_id = $3,
+             updated_at = $4
+         WHERE project_id = $1 AND folder_path = $2`,
+        [project.id, folderPath, parentFolderId, updatedAt],
+      )
+    }
+
+    await transactionClient.query('DELETE FROM collab_files WHERE project_id = $1', [project.id])
 
     for (const file of project.files.values()) {
       const normalizedPath = normalizePath(file.path || file.name)
@@ -3294,7 +3434,7 @@ const persistProject = async (project) => {
         ? Math.max(0, Number(file.sizeBytes))
         : Buffer.byteLength(String(resolvedContent || ''), 'utf8')
 
-      const fileUpsertResult = await dbClient.query(
+      const fileUpsertResult = await transactionClient.query(
         `INSERT INTO collab_files (id, project_id, folder_id, file_name, file_path, language, size_bytes, created_by, created_at, updated_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          ON CONFLICT (project_id, file_path) DO UPDATE SET
@@ -3320,7 +3460,7 @@ const persistProject = async (project) => {
 
       const persistedFileId = fileUpsertResult.rows?.[0]?.id || file.id
 
-      await dbClient.query(
+      await transactionClient.query(
         `INSERT INTO collab_file_content (id, file_id, content, blob_url, cloudinary_public_id, updated_at)
          VALUES ($1, $2, $3, $4, $5, $6)
          ON CONFLICT (file_id) DO UPDATE SET
@@ -3339,9 +3479,9 @@ const persistProject = async (project) => {
       )
     }
 
-    await dbClient.query('DELETE FROM collab_chat_messages WHERE project_id = $1', [project.id])
+    await transactionClient.query('DELETE FROM collab_chat_messages WHERE project_id = $1', [project.id])
     for (const message of project.chat || []) {
-      await dbClient.query(
+      await transactionClient.query(
         `INSERT INTO collab_chat_messages (id, project_id, user_id, file_id, message_text, is_edited, edited_at, created_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
         [
@@ -3357,10 +3497,12 @@ const persistProject = async (project) => {
       )
     }
 
-    await dbClient.query('COMMIT')
+    await transactionClient.query('COMMIT')
   } catch (error) {
-    await dbClient.query('ROLLBACK')
+    await transactionClient.query('ROLLBACK')
     throw error
+  } finally {
+    await transactionClient.end().catch(() => {})
   }
 }
 
@@ -3674,12 +3816,35 @@ const initDb = async () => {
   dbClient = new Client({ connectionString: DATABASE_URL })
   await dbClient.connect()
 
-  const usersResult = await dbClient.query('SELECT id, email, name FROM collab_users')
+  await dbClient.query('ALTER TABLE collab_users ADD COLUMN IF NOT EXISTS avatar_url TEXT')
+  await dbClient.query('ALTER TABLE collab_users ADD COLUMN IF NOT EXISTS bio TEXT')
+  await dbClient.query('ALTER TABLE collab_users ADD COLUMN IF NOT EXISTS pronouns TEXT')
+  await dbClient.query('ALTER TABLE collab_users ADD COLUMN IF NOT EXISTS company TEXT')
+  await dbClient.query('ALTER TABLE collab_users ADD COLUMN IF NOT EXISTS location TEXT')
+  await dbClient.query('ALTER TABLE collab_users ADD COLUMN IF NOT EXISTS github_username TEXT')
+  await dbClient.query('ALTER TABLE collab_users ADD COLUMN IF NOT EXISTS github_access_token TEXT')
+  await dbClient.query('ALTER TABLE collab_users ADD COLUMN IF NOT EXISTS github_token_scope TEXT')
+  await dbClient.query('ALTER TABLE collab_users ADD COLUMN IF NOT EXISTS github_connected_at TIMESTAMPTZ')
+
+  const usersResult = await dbClient.query(
+    `SELECT id, email, name, avatar_url, bio, pronouns, company, location,
+            github_username, github_access_token, github_token_scope, github_connected_at
+       FROM collab_users`,
+  )
   for (const row of usersResult.rows) {
     const user = {
       id: row.id,
       email: row.email,
       name: row.name,
+      avatarUrl: row.avatar_url || '',
+      bio: row.bio || '',
+      pronouns: row.pronouns || '',
+      company: row.company || '',
+      location: row.location || '',
+      githubUsername: row.github_username || '',
+      githubAccessToken: row.github_access_token || '',
+      githubTokenScope: row.github_token_scope || '',
+      githubConnectedAt: row.github_connected_at || null,
       passwordHash: '__clerk__',
     }
     users.set(user.id, user)
@@ -3805,6 +3970,11 @@ const sanitizeUser = (user) => ({
   id: user.id,
   name: user.name,
   email: user.email,
+  avatarUrl: user.avatarUrl || '',
+  bio: user.bio || '',
+  pronouns: user.pronouns || '',
+  company: user.company || '',
+  location: user.location || '',
 })
 
 const isSyntheticUserName = (name) => {
@@ -3833,6 +4003,15 @@ const parseUserFromClaims = (userId, claims = {}) => {
     id: userId,
     email: String(email).toLowerCase(),
     name: String(name).trim(),
+    avatarUrl: '',
+    bio: '',
+    pronouns: '',
+    company: '',
+    location: '',
+    githubUsername: '',
+    githubAccessToken: '',
+    githubTokenScope: '',
+    githubConnectedAt: null,
     passwordHash: '__clerk__',
   }
 }
@@ -3926,6 +4105,114 @@ const getUserDisplayName = (userId) => {
   return String(userId || 'Unknown')
 }
 
+const ensureGithubConfigured = () => {
+  if (!GITHUB_CLIENT_ID || !GITHUB_CLIENT_SECRET || !GITHUB_OAUTH_CALLBACK_URL) {
+    return {
+      error: {
+        status: 503,
+        message: 'GitHub OAuth is not configured. Set GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET and GITHUB_OAUTH_CALLBACK_URL.',
+      },
+    }
+  }
+  return { ok: true }
+}
+
+const getGithubAccessTokenForUser = (userId) => {
+  const user = users.get(userId)
+  const token = String(user?.githubAccessToken || '').trim()
+  if (!token) return ''
+  return token
+}
+
+const githubApiRequest = async (token, endpoint, options = {}) => {
+  const response = await fetch(`https://api.github.com${endpoint}`, {
+    ...options,
+    headers: {
+      Accept: 'application/vnd.github+json',
+      Authorization: `Bearer ${token}`,
+      'X-GitHub-Api-Version': '2022-11-28',
+      ...(options.headers || {}),
+    },
+  })
+
+  const rawBody = await response.text().catch(() => '')
+  let payload = {}
+  if (rawBody) {
+    try {
+      payload = JSON.parse(rawBody)
+    } catch {
+      payload = { message: rawBody }
+    }
+  }
+
+  if (!response.ok) {
+    throw new Error(String(payload?.message || `GitHub request failed (${response.status})`))
+  }
+
+  return payload
+}
+
+const listProjectFilesForGithubUpload = async (project) => {
+  const entries = []
+  const sortedFiles = Array.from(project.files.values()).sort((a, b) =>
+    String(a?.path || a?.name || '').localeCompare(String(b?.path || b?.name || '')),
+  )
+
+  for (const file of sortedFiles) {
+    const relativePath = normalizePath(file?.path || file?.name || '')
+    if (!relativePath) continue
+    if (!isValidProjectRelativePath(relativePath)) continue
+
+    if (file?.isBinary) {
+      let binaryBuffer = null
+      const inMemory = typeof file?.content === 'string' ? file.content : ''
+      const decoded = decodeDataUrl(inMemory)
+      if (decoded?.buffer) {
+        binaryBuffer = decoded.buffer
+      }
+
+      if (!binaryBuffer && typeof file?.blobUrl === 'string' && file.blobUrl.trim()) {
+        const blobUrl = file.blobUrl.trim()
+        const decodedFromBlob = decodeDataUrl(blobUrl)
+        if (decodedFromBlob?.buffer) {
+          binaryBuffer = decodedFromBlob.buffer
+        } else {
+          const fetched = await fetch(blobUrl)
+          if (fetched.ok) {
+            binaryBuffer = Buffer.from(await fetched.arrayBuffer())
+          }
+        }
+      }
+
+      entries.push({
+        path: relativePath,
+        content: (binaryBuffer || Buffer.alloc(0)).toString('base64'),
+        mode: '100644',
+      })
+      continue
+    }
+
+    const rawContent = typeof file?.content === 'string' ? file.content : ((await getFileContent(project.id, file.id)) ?? '')
+    const textBuffer = Buffer.from(String(rawContent || ''), 'utf8')
+    entries.push({
+      path: relativePath,
+      content: textBuffer.toString('base64'),
+      mode: '100644',
+    })
+  }
+
+  return entries
+}
+
+const cleanupExpiredGithubOauthStates = () => {
+  const now = Date.now()
+  for (const [state, entry] of githubOauthStates.entries()) {
+    if (!entry || Number(entry.expiresAt || 0) <= now) {
+      githubOauthStates.delete(state)
+    }
+  }
+}
+
 const serializeProjectSummary = (project, userId) => ({
   id: project.id,
   name: project.name,
@@ -3961,6 +4248,14 @@ const serializeProjectDetail = (project, userId) => ({
 })
 
 const normalizeProjectName = (value = '') => String(value || '').trim().toLowerCase()
+
+const sanitizeDownloadName = (value = '', fallback = 'project') => {
+  const normalized = String(value || '')
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, '_')
+    .replace(/\s+/g, ' ')
+  return normalized || fallback
+}
 
 const projectNameExists = async (name, excludeProjectId = null) => {
   const normalizedName = normalizeProjectName(name)
@@ -4069,6 +4364,221 @@ app.get('/api/me', authMiddleware, (req, res) => {
     return res.status(404).json({ message: 'User not found' })
   }
   return res.json({ user: sanitizeUser(user) })
+})
+
+app.put('/api/me', authMiddleware, async (req, res) => {
+  const user = users.get(req.userId)
+  if (!user) {
+    return res.status(404).json({ message: 'User not found' })
+  }
+
+  const name = String(req.body?.name || '').trim()
+  const bio = String(req.body?.bio || '').trim()
+  const pronouns = String(req.body?.pronouns || '').trim()
+  const company = String(req.body?.company || '').trim()
+  const location = String(req.body?.location || '').trim()
+  const avatarUrl = String(req.body?.avatarUrl || '').trim()
+
+  if (!name) {
+    return res.status(400).json({ message: 'Name is required' })
+  }
+
+  if (name.length > 100 || bio.length > 300 || pronouns.length > 60 || company.length > 100 || location.length > 120) {
+    return res.status(400).json({ message: 'One or more profile fields are too long' })
+  }
+
+  if (avatarUrl && !avatarUrl.startsWith('data:image/') && !/^https?:\/\//i.test(avatarUrl)) {
+    return res.status(400).json({ message: 'Avatar must be an image data URL or an http/https URL' })
+  }
+
+  const updatedUser = {
+    ...user,
+    name,
+    bio,
+    pronouns,
+    company,
+    location,
+    avatarUrl,
+  }
+
+  users.set(updatedUser.id, updatedUser)
+  if (updatedUser.email) {
+    usersByEmail.set(updatedUser.email, updatedUser.id)
+  }
+  await persistUser(updatedUser)
+
+  return res.json({ user: sanitizeUser(updatedUser) })
+})
+
+app.get('/api/github/status', authMiddleware, async (req, res) => {
+  const user = users.get(req.userId)
+  if (!user) {
+    return res.status(404).json({ message: 'User not found' })
+  }
+
+  const connected = Boolean(String(user.githubAccessToken || '').trim())
+  return res.json({
+    connected,
+    username: String(user.githubUsername || '').trim(),
+  })
+})
+
+app.get('/api/github/oauth/start', authMiddleware, async (req, res) => {
+  const config = ensureGithubConfigured()
+  if (config.error) {
+    return res.status(config.error.status).json({ message: config.error.message })
+  }
+
+  cleanupExpiredGithubOauthStates()
+  const state = randomUUID().replace(/-/g, '')
+  const redirectPath = String(req.query.redirectPath || '/dashboard').trim()
+  const safeRedirectPath = redirectPath.startsWith('/') ? redirectPath : '/dashboard'
+
+  githubOauthStates.set(state, {
+    userId: req.userId,
+    redirectPath: safeRedirectPath,
+    expiresAt: Date.now() + 10 * 60 * 1000,
+  })
+
+  const params = new URLSearchParams({
+    client_id: GITHUB_CLIENT_ID,
+    redirect_uri: GITHUB_OAUTH_CALLBACK_URL,
+    scope: 'repo',
+    state,
+    allow_signup: 'true',
+  })
+
+  return res.json({
+    url: `https://github.com/login/oauth/authorize?${params.toString()}`,
+  })
+})
+
+app.get('/api/github/oauth/callback', async (req, res) => {
+  const oauthError = String(req.query.error || '').trim()
+  const oauthErrorDescription = String(req.query.error_description || '').trim()
+  const code = String(req.query.code || '').trim()
+  const state = String(req.query.state || '').trim()
+
+  cleanupExpiredGithubOauthStates()
+  const stateEntry = githubOauthStates.get(state)
+  if (stateEntry) {
+    githubOauthStates.delete(state)
+  }
+
+  const redirectPath = stateEntry?.redirectPath || '/dashboard'
+  const buildFrontendRedirect = (status, message = '') => {
+    const params = new URLSearchParams({ github_oauth: status })
+    if (message) {
+      params.set('message', message)
+    }
+    return `${FRONTEND_BASE_URL}${redirectPath}?${params.toString()}`
+  }
+
+  if (!stateEntry || !stateEntry.userId) {
+    return res.redirect(buildFrontendRedirect('error', 'OAuth state expired. Please try again.'))
+  }
+
+  if (oauthError) {
+    return res.redirect(buildFrontendRedirect('error', oauthErrorDescription || oauthError))
+  }
+
+  if (!code) {
+    return res.redirect(buildFrontendRedirect('error', 'GitHub did not return an authorization code.'))
+  }
+
+  const config = ensureGithubConfigured()
+  if (config.error) {
+    return res.redirect(buildFrontendRedirect('error', config.error.message))
+  }
+
+  try {
+    const tokenExchangeResponse = await fetch('https://github.com/login/oauth/access_token', {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        client_id: GITHUB_CLIENT_ID,
+        client_secret: GITHUB_CLIENT_SECRET,
+        code,
+        redirect_uri: GITHUB_OAUTH_CALLBACK_URL,
+        state,
+      }).toString(),
+    })
+
+    const tokenPayload = await tokenExchangeResponse.json().catch(() => ({}))
+    const githubAccessToken = String(tokenPayload?.access_token || '').trim()
+    const tokenScope = String(tokenPayload?.scope || '').trim()
+    if (!githubAccessToken) {
+      const oauthMessage = String(tokenPayload?.error_description || tokenPayload?.error || 'Failed to obtain access token.')
+      return res.redirect(buildFrontendRedirect('error', oauthMessage))
+    }
+
+    const githubProfile = await githubApiRequest(githubAccessToken, '/user')
+    const githubUsername = String(githubProfile?.login || '').trim()
+    if (!githubUsername) {
+      return res.redirect(buildFrontendRedirect('error', 'Failed to resolve GitHub username.'))
+    }
+
+    const user = users.get(stateEntry.userId)
+    if (!user) {
+      return res.redirect(buildFrontendRedirect('error', 'User not found for OAuth state.'))
+    }
+
+    const nextUser = {
+      ...user,
+      githubUsername,
+      githubAccessToken,
+      githubTokenScope: tokenScope,
+      githubConnectedAt: nowIso(),
+    }
+
+    users.set(nextUser.id, nextUser)
+    usersByEmail.set(nextUser.email, nextUser.id)
+    await persistUser(nextUser)
+
+    return res.redirect(buildFrontendRedirect('success'))
+  } catch (oauthCallbackError) {
+    return res.redirect(buildFrontendRedirect('error', String(oauthCallbackError?.message || 'Failed to connect GitHub account.')))
+  }
+})
+
+app.get('/api/github/repos', authMiddleware, async (req, res) => {
+  const user = users.get(req.userId)
+  if (!user) {
+    return res.status(404).json({ message: 'User not found' })
+  }
+
+  const githubAccessToken = getGithubAccessTokenForUser(req.userId)
+  if (!githubAccessToken) {
+    return res.status(400).json({ message: 'GitHub account is not connected.' })
+  }
+
+  try {
+    const repos = await githubApiRequest(
+      githubAccessToken,
+      '/user/repos?per_page=100&sort=updated&direction=desc&affiliation=owner',
+    )
+
+    const normalizedRepos = Array.isArray(repos)
+      ? repos.map((repo) => ({
+          id: repo.id,
+          name: repo.name,
+          fullName: repo.full_name,
+          private: Boolean(repo.private),
+          htmlUrl: repo.html_url,
+          defaultBranch: repo.default_branch || 'main',
+        }))
+      : []
+
+    return res.json({
+      username: String(user.githubUsername || '').trim(),
+      repos: normalizedRepos,
+    })
+  } catch (reposError) {
+    return res.status(500).json({ message: reposError.message || 'Failed to fetch repositories' })
+  }
 })
 
 app.get('/api/projects', authMiddleware, (req, res) => {
@@ -4185,6 +4695,379 @@ app.get('/api/projects/:projectId', authMiddleware, async (req, res) => {
   project.memberMeta.set(req.userId, { lastOpenedAt: nowIso() })
   await persistProject(project)
   return res.json({ project: serializeProjectDetail(project, req.userId) })
+})
+
+app.get('/api/projects/:projectId/download', authMiddleware, async (req, res) => {
+  const { projectId } = req.params
+  const { project, error } = assertProjectMembership(projectId, req.userId)
+  if (error) {
+    return res.status(error.status).json({ message: error.message })
+  }
+
+  if (!canEditProject(project, req.userId)) {
+    return res.status(403).json({ message: 'Only owner and collaborators can download project ZIP' })
+  }
+
+  try {
+    const zip = new JSZip()
+    const rootFolderName = sanitizeDownloadName(project?.name || 'project', 'project')
+    const rootFolder = zip.folder(rootFolderName)
+
+    const sortedFolders = Array.from(project.folders || []).sort((a, b) => String(a).localeCompare(String(b)))
+    for (const folderPath of sortedFolders) {
+      const normalizedFolderPath = normalizePath(folderPath)
+      if (!normalizedFolderPath) continue
+      if (!isValidProjectRelativePath(normalizedFolderPath)) continue
+      rootFolder.folder(normalizedFolderPath)
+    }
+
+    const sortedFiles = Array.from(project.files.values()).sort((a, b) =>
+      String(a?.path || a?.name || '').localeCompare(String(b?.path || b?.name || '')),
+    )
+
+    for (const file of sortedFiles) {
+      const relativePath = normalizePath(file?.path || file?.name || '')
+      if (!relativePath) continue
+      if (!isValidProjectRelativePath(relativePath)) continue
+
+      if (file?.isBinary) {
+        let binaryBuffer = null
+
+        if (typeof file?.content === 'string') {
+          const decoded = decodeDataUrl(file.content)
+          if (decoded?.buffer) {
+            binaryBuffer = decoded.buffer
+          }
+        }
+
+        if (!binaryBuffer && typeof file?.blobUrl === 'string' && file.blobUrl.trim()) {
+          const blobUrl = file.blobUrl.trim()
+          const decodedFromBlobUrl = decodeDataUrl(blobUrl)
+          if (decodedFromBlobUrl?.buffer) {
+            binaryBuffer = decodedFromBlobUrl.buffer
+          } else {
+            const fileResponse = await fetch(blobUrl)
+            if (fileResponse.ok) {
+              const arrayBuffer = await fileResponse.arrayBuffer()
+              binaryBuffer = Buffer.from(arrayBuffer)
+            }
+          }
+        }
+
+        rootFolder.file(relativePath, binaryBuffer || Buffer.alloc(0))
+        continue
+      }
+
+      const rawContent =
+        typeof file?.content === 'string' ? file.content : ((await getFileContent(project.id, file.id)) ?? '')
+      rootFolder.file(relativePath, String(rawContent || ''))
+    }
+
+    const zipBuffer = await zip.generateAsync({
+      type: 'nodebuffer',
+      compression: 'DEFLATE',
+      compressionOptions: { level: 6 },
+    })
+
+    const downloadName = sanitizeDownloadName(project?.name || 'project', 'project')
+    res.setHeader('Content-Type', 'application/zip')
+    res.setHeader('Content-Disposition', `attachment; filename="${downloadName}.zip"`)
+    res.setHeader('Content-Length', String(zipBuffer.length))
+    return res.send(zipBuffer)
+  } catch (downloadError) {
+    console.error('Failed to build project zip:', downloadError)
+    return res.status(500).json({ message: 'Failed to generate project ZIP' })
+  }
+})
+
+app.post('/api/projects/:projectId/github/upload', authMiddleware, async (req, res) => {
+  const { projectId } = req.params
+  const { project, error } = assertProjectMembership(projectId, req.userId)
+  if (error) {
+    return res.status(error.status).json({ message: error.message })
+  }
+
+  const role = getMemberRole(project, req.userId)
+  if (role !== 'owner') {
+    return res.status(403).json({ message: 'Only project owner can upload to GitHub.' })
+  }
+
+  const user = users.get(req.userId)
+  const githubAccessToken = getGithubAccessTokenForUser(req.userId)
+  const githubUsername = String(user?.githubUsername || '').trim()
+  if (!githubAccessToken || !githubUsername) {
+    return res.status(400).json({ message: 'GitHub account is not connected.' })
+  }
+
+  try {
+    const uploadMode = String(req.body?.mode || 'existing').trim().toLowerCase()
+    let repositoryOwner = ''
+    let repositoryName = ''
+
+    if (uploadMode === 'new') {
+      repositoryName = String(req.body?.repositoryName || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9-_]/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '')
+
+      if (!repositoryName) {
+        return res.status(400).json({ message: 'Repository name is required for new repository upload.' })
+      }
+
+      const createdRepo = await githubApiRequest(githubAccessToken, '/user/repos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: repositoryName,
+          private: Boolean(req.body?.isPrivate ?? true),
+          auto_init: false,
+        }),
+      })
+
+      repositoryOwner = String(createdRepo?.owner?.login || githubUsername).trim()
+      repositoryName = String(createdRepo?.name || repositoryName).trim()
+    } else {
+      const repositoryFullName = String(req.body?.repositoryFullName || '').trim()
+      const [ownerPart, repoPart] = repositoryFullName.split('/')
+      repositoryOwner = String(ownerPart || '').trim()
+      repositoryName = String(repoPart || '').trim()
+
+      if (!repositoryOwner || !repositoryName) {
+        return res.status(400).json({ message: 'Select a valid repository (owner/repo).' })
+      }
+
+      if (repositoryOwner.toLowerCase() !== githubUsername.toLowerCase()) {
+        return res.status(403).json({ message: 'You can upload only to repositories in your own GitHub account.' })
+      }
+    }
+
+    const repo = await githubApiRequest(
+      githubAccessToken,
+      `/repos/${encodeURIComponent(repositoryOwner)}/${encodeURIComponent(repositoryName)}`,
+    )
+
+    const projectFiles = await listProjectFilesForGithubUpload(project)
+    if (!projectFiles.length) {
+      return res.status(400).json({ message: 'Project has no files to upload.' })
+    }
+
+    let parentCommitSha = ''
+    let baseTreeSha = ''
+
+    try {
+      const mainRef = await githubApiRequest(
+        githubAccessToken,
+        `/repos/${encodeURIComponent(repositoryOwner)}/${encodeURIComponent(repositoryName)}/git/ref/heads/main`,
+      )
+      parentCommitSha = String(mainRef?.object?.sha || '').trim()
+    } catch {
+      parentCommitSha = ''
+    }
+
+    if (parentCommitSha) {
+      const parentCommit = await githubApiRequest(
+        githubAccessToken,
+        `/repos/${encodeURIComponent(repositoryOwner)}/${encodeURIComponent(repositoryName)}/git/commits/${encodeURIComponent(parentCommitSha)}`,
+      )
+      baseTreeSha = String(parentCommit?.tree?.sha || '').trim()
+    }
+
+    const treeItems = []
+    for (const file of projectFiles) {
+      const blob = await githubApiRequest(
+        githubAccessToken,
+        `/repos/${encodeURIComponent(repositoryOwner)}/${encodeURIComponent(repositoryName)}/git/blobs`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            content: file.content,
+            encoding: 'base64',
+          }),
+        },
+      )
+
+      treeItems.push({
+        path: file.path,
+        mode: file.mode || '100644',
+        type: 'blob',
+        sha: blob.sha,
+      })
+    }
+
+    const tree = await githubApiRequest(
+      githubAccessToken,
+      `/repos/${encodeURIComponent(repositoryOwner)}/${encodeURIComponent(repositoryName)}/git/trees`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          base_tree: baseTreeSha || undefined,
+          tree: treeItems,
+        }),
+      },
+    )
+
+    const commit = await githubApiRequest(
+      githubAccessToken,
+      `/repos/${encodeURIComponent(repositoryOwner)}/${encodeURIComponent(repositoryName)}/git/commits`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: GITHUB_DEFAULT_COMMIT_MESSAGE,
+          tree: tree.sha,
+          parents: parentCommitSha ? [parentCommitSha] : [],
+        }),
+      },
+    )
+
+    if (parentCommitSha) {
+      await githubApiRequest(
+        githubAccessToken,
+        `/repos/${encodeURIComponent(repositoryOwner)}/${encodeURIComponent(repositoryName)}/git/refs/heads/main`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sha: commit.sha, force: true }),
+        },
+      )
+    } else {
+      await githubApiRequest(
+        githubAccessToken,
+        `/repos/${encodeURIComponent(repositoryOwner)}/${encodeURIComponent(repositoryName)}/git/refs`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ref: 'refs/heads/main', sha: commit.sha }),
+        },
+      )
+    }
+
+    return res.json({
+      ok: true,
+      message: 'Project uploaded to GitHub successfully.',
+      branch: 'main',
+      repository: {
+        name: repo.name,
+        fullName: repo.full_name,
+        htmlUrl: repo.html_url,
+        private: Boolean(repo.private),
+      },
+      commit: {
+        sha: commit.sha,
+        htmlUrl: String(repo.html_url || '').trim() ? `${String(repo.html_url || '').trim()}/commit/${commit.sha}` : '',
+      },
+    })
+  } catch (uploadError) {
+    console.error('GitHub upload failed:', uploadError)
+    return res.status(500).json({ message: uploadError.message || 'Failed to upload project to GitHub.' })
+  }
+})
+
+app.get('/api/projects/:projectId/voice/token', authMiddleware, async (req, res) => {
+  const { projectId } = req.params
+  const { project, error } = assertProjectMembership(projectId, req.userId)
+  if (error) {
+    return res.status(error.status).json({ message: error.message })
+  }
+
+  if (!LIVEKIT_URL || !LIVEKIT_API_KEY || !LIVEKIT_API_SECRET) {
+    return res.status(503).json({
+      message: 'Voice channel is not configured on server. Set LIVEKIT_URL, LIVEKIT_API_KEY and LIVEKIT_API_SECRET.',
+    })
+  }
+
+  try {
+    const roomName = `project-${project.id}`
+    const role = getMemberRole(project, req.userId)
+    const participantUser = users.get(req.userId)
+    const participantName = getUserDisplayName(req.userId)
+
+    const accessToken = new AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET, {
+      identity: req.userId,
+      name: participantName,
+      metadata: JSON.stringify({
+        userId: req.userId,
+        name: participantName,
+        role,
+        avatarUrl: normalizeRealtimeAvatarUrl(participantUser?.avatarUrl),
+        projectId: project.id,
+      }),
+      ttl: '12h',
+    })
+
+    accessToken.addGrant({
+      roomJoin: true,
+      room: roomName,
+      canPublish: true,
+      canSubscribe: true,
+      canPublishData: true,
+    })
+
+    const token = await accessToken.toJwt()
+    return res.json({
+      token,
+      url: LIVEKIT_URL,
+      roomName,
+    })
+  } catch (voiceTokenError) {
+    console.error('Failed to create voice token:', voiceTokenError)
+    return res.status(500).json({ message: 'Failed to create voice channel token' })
+  }
+})
+
+app.get('/api/projects/:projectId/voice/participants', authMiddleware, async (req, res) => {
+  const { projectId } = req.params
+  const { project, error } = assertProjectMembership(projectId, req.userId)
+  if (error) {
+    return res.status(error.status).json({ message: error.message })
+  }
+
+  if (!LIVEKIT_URL || !LIVEKIT_API_KEY || !LIVEKIT_API_SECRET) {
+    return res.status(503).json({
+      message: 'Voice channel is not configured on server. Set LIVEKIT_URL, LIVEKIT_API_KEY and LIVEKIT_API_SECRET.',
+    })
+  }
+
+  try {
+    const roomName = `project-${project.id}`
+    const roomService = new RoomServiceClient(toLiveKitApiUrl(LIVEKIT_URL), LIVEKIT_API_KEY, LIVEKIT_API_SECRET)
+    const participants = await roomService.listParticipants(roomName)
+
+    const normalizedParticipants = participants.map((participant) => {
+      let metadata = {}
+      try {
+        metadata = participant?.metadata ? JSON.parse(participant.metadata) : {}
+      } catch {
+        metadata = {}
+      }
+
+      const identity = String(participant?.identity || metadata?.userId || '').trim()
+      const name =
+        String(participant?.name || metadata?.name || users.get(identity)?.name || 'User').trim() ||
+        getUserDisplayName(identity)
+      const avatarUrl = normalizeAvatarForUi(users.get(identity)?.avatarUrl || metadata?.avatarUrl)
+
+      return {
+        id: identity || `livekit-${Math.random().toString(36).slice(2, 9)}`,
+        name,
+        avatarUrl,
+      }
+    })
+
+    return res.json({ participants: normalizedParticipants })
+  } catch (voiceParticipantsError) {
+    const errorMessage = String(voiceParticipantsError?.message || '').toLowerCase()
+    if (errorMessage.includes('room does not exist') || errorMessage.includes('not found')) {
+      return res.json({ participants: [] })
+    }
+
+    console.error('Failed to fetch voice participants:', voiceParticipantsError)
+    return res.status(500).json({ message: 'Failed to fetch voice channel participants' })
+  }
 })
 
 app.post('/api/projects/:projectId/live-session', authMiddleware, async (req, res) => {
@@ -4966,6 +5849,17 @@ io.on('connection', (socket) => {
     project.memberMeta.set(socket.userId, { lastOpenedAt: nowIso() })
     project.updatedAt = nowIso()
 
+    // Drop transient per-user ordering watermarks for this socket user on join.
+    // This avoids reconnect sessions being blocked by stale in-memory version counters.
+    for (const file of project.files.values()) {
+      if (file && file._latestScheduledClientUpdateAtByUser && typeof file._latestScheduledClientUpdateAtByUser === 'object') {
+        delete file._latestScheduledClientUpdateAtByUser[socket.userId]
+      }
+      if (file && file._latestAppliedClientUpdateAtByUser && typeof file._latestAppliedClientUpdateAtByUser === 'object') {
+        delete file._latestAppliedClientUpdateAtByUser[socket.userId]
+      }
+    }
+
     socket.join(projectRoom(projectId))
     socket.to(projectRoom(projectId)).emit('presence:joined', {
       userId: socket.userId,
@@ -5043,7 +5937,7 @@ io.on('connection', (socket) => {
       activityType: 'file_created',
       activityData: { path: file.path, name: file.name, actorName: socket.userName || '' },
     })
-    syncFileToActiveWorkspaces(projectId, file.path, file.content)
+    scheduleFileSyncToActiveWorkspaces(projectId, file.path, file.content)
 
     io.to(projectRoom(projectId)).emit('file:created', file)
   })
@@ -5137,43 +6031,106 @@ io.on('connection', (socket) => {
     io.to(projectRoom(projectId)).emit('file:deleted', { fileId })
   })
 
-  socket.on('file:update', async ({ projectId, fileId, content, clientUpdatedAt }) => {
-    const { project } = assertProjectMembership(projectId, socket.userId)
-    if (!project || !canEditProject(project, socket.userId)) return
-
-    const file = project.files.get(fileId)
-    if (!file) return
-    if (file.isBinary) return
-
-    const incomingVersion = Number(clientUpdatedAt)
-    const normalizedVersion = Number.isFinite(incomingVersion) ? incomingVersion : Date.now()
-    const latestScheduledVersion = Number(file._latestScheduledClientUpdateAt || 0)
-    if (normalizedVersion < latestScheduledVersion) return
-    file._latestScheduledClientUpdateAt = normalizedVersion
-
-    // Update Cloudinary storage if configured
-    const updates = await updateFileRecord(projectId, fileId, content ?? '', socket.userId)
-    if (normalizedVersion < Number(file._latestScheduledClientUpdateAt || 0)) {
-      return
+  socket.on('file:update', async ({ projectId, fileId, content, clientUpdatedAt }, ack) => {
+    const respond = (payload) => {
+      if (typeof ack === 'function') {
+        try {
+          ack(payload)
+        } catch {
+          // Ignore ack transport issues.
+        }
+      }
     }
 
-    file.content = updates.content
-    if (updates.blobUrl) file.blobUrl = updates.blobUrl
-    if (updates.cloudinaryPublicId) file.cloudinaryPublicId = updates.cloudinaryPublicId
-    file.updatedAt = updates.updatedAt
-    file._latestAppliedClientUpdateAt = normalizedVersion
-    project.updatedAt = updates.updatedAt
-    await persistProject(project)
-    syncFileToActiveWorkspaces(projectId, file.path, file.content)
+    try {
+      const { project } = assertProjectMembership(projectId, socket.userId)
+      if (!project || !canEditProject(project, socket.userId)) {
+        console.warn('[collab] file:update rejected', {
+          reason: 'forbidden_or_missing_project',
+          projectId,
+          fileId,
+          userId: socket.userId,
+        })
+        respond({ ok: false, reason: 'forbidden_or_missing_project' })
+        return
+      }
 
-    socket.to(projectRoom(projectId)).emit('file:updated', {
-      fileId,
-      content: file.content,
-      updatedAt: updates.updatedAt,
-      clientUpdatedAt: normalizedVersion,
-      userId: socket.userId,
-      userName: socket.userName,
-    })
+      const file = project.files.get(fileId)
+      if (!file) {
+        console.warn('[collab] file:update rejected', {
+          reason: 'file_not_found',
+          projectId,
+          fileId,
+          userId: socket.userId,
+        })
+        respond({ ok: false, reason: 'file_not_found' })
+        return
+      }
+      if (file.isBinary) {
+        respond({ ok: false, reason: 'binary_file_not_editable' })
+        return
+      }
+
+      const incomingVersion = Number(clientUpdatedAt)
+      const normalizedVersion = Number.isFinite(incomingVersion) ? incomingVersion : Date.now()
+      if (!file._latestScheduledClientUpdateAtByUser || typeof file._latestScheduledClientUpdateAtByUser !== 'object') {
+        file._latestScheduledClientUpdateAtByUser = {}
+      }
+      const latestScheduledVersion = Number(file._latestScheduledClientUpdateAtByUser[socket.userId] || 0)
+      if (normalizedVersion <= latestScheduledVersion) {
+        console.warn('[collab] file:update rejected', {
+          reason: 'stale_update',
+          projectId,
+          fileId,
+          userId: socket.userId,
+          incomingVersion: normalizedVersion,
+          latestScheduledVersion,
+        })
+        respond({
+          ok: false,
+          reason: 'stale_update',
+          incomingVersion: normalizedVersion,
+          latestScheduledVersion,
+        })
+        return
+      }
+      file._latestScheduledClientUpdateAtByUser[socket.userId] = normalizedVersion
+
+      const normalizedContent = String(content ?? '')
+      const updatedAt = nowIso()
+
+      file.content = normalizedContent
+      file.updatedAt = updatedAt
+      if (!file._latestAppliedClientUpdateAtByUser || typeof file._latestAppliedClientUpdateAtByUser !== 'object') {
+        file._latestAppliedClientUpdateAtByUser = {}
+      }
+      file._latestAppliedClientUpdateAtByUser[socket.userId] = normalizedVersion
+      project.updatedAt = updatedAt
+
+      socket.to(projectRoom(projectId)).emit('file:updated', {
+        fileId,
+        content: file.content,
+        updatedAt,
+        clientUpdatedAt: normalizedVersion,
+        userId: socket.userId,
+        userName: socket.userName,
+      })
+
+      // Keep peer editing snappy: all heavier sync work is async/debounced.
+      scheduleFileSyncToActiveWorkspaces(projectId, file.path, file.content)
+
+      scheduleProjectPersist(projectId)
+      respond({ ok: true, updatedAt, clientUpdatedAt: normalizedVersion })
+    } catch (fileUpdateError) {
+      console.error('[collab] file:update failed', {
+        projectId,
+        fileId,
+        userId: socket.userId,
+        error: fileUpdateError?.message || 'unknown_error',
+      })
+      respond({ ok: false, reason: 'server_error', message: fileUpdateError?.message || 'Unknown error' })
+      socket.emit('error:event', { message: `File update failed: ${fileUpdateError?.message || 'Unknown error'}` })
+    }
   })
 
   socket.on('folder:create', async ({ projectId, folderPath }) => {
@@ -5304,53 +6261,86 @@ io.on('connection', (socket) => {
     await broadcastProjectSnapshot(projectId, project)
   })
 
-  socket.on('cursor:update', ({ projectId, fileId, position }) => {
+  socket.on('cursor:update', ({ projectId, fileId, position, isTyping }) => {
     const { project } = assertProjectMembership(projectId, socket.userId)
     if (!project || !project.files.has(fileId)) return
+
+    const user = users.get(socket.userId)
 
     socket.to(projectRoom(projectId)).emit('cursor:updated', {
       fileId,
       position,
+      isTyping: Boolean(isTyping),
       userId: socket.userId,
       userName: socket.userName,
+      avatarUrl: String(user?.avatarUrl || ''),
     })
   })
 
-  socket.on('chat:send', async ({ projectId, message, clientMessageId, userName }) => {
-    const { project } = assertProjectMembership(projectId, socket.userId)
-    if (!project || !message?.trim()) return
-
-    const resolvedUserName =
-      String(userName || '').trim() ||
-      users.get(socket.userId)?.name?.trim() ||
-      socket.userName ||
-      users.get(socket.userId)?.email?.split('@')[0] ||
-      `User-${String(socket.userId).slice(0, 6)}`
-    socket.userName = resolvedUserName
-
-    const chatMessage = {
-      id: randomUUID(),
-      clientMessageId: clientMessageId || null,
-      message: message.trim(),
-      userId: socket.userId,
-      userName: resolvedUserName,
-      createdAt: new Date().toISOString(),
+  socket.on('chat:send', async ({ projectId, message, clientMessageId, userName }, ack) => {
+    const respond = (payload) => {
+      if (typeof ack === 'function') {
+        try {
+          ack(payload)
+        } catch {
+          // Ignore ack transport issues.
+        }
+      }
     }
 
-    project.chat.push(chatMessage)
-    project.updatedAt = chatMessage.createdAt
-    await persistProject(project)
-    await recordProjectEvent({
-      projectId,
-      userId: socket.userId,
-      actionType: 'chat_message_sent',
-      resourceType: 'chat_message',
-      resourceId: chatMessage.id,
-      details: { preview: chatMessage.message.slice(0, 120) },
-      activityType: 'chat_message_sent',
-      activityData: { preview: chatMessage.message.slice(0, 120), actorName: resolvedUserName },
-    })
-    io.to(projectRoom(projectId)).emit('chat:message', chatMessage)
+    try {
+      const { project } = assertProjectMembership(projectId, socket.userId)
+      if (!project) {
+        respond({ ok: false, reason: 'project_not_found_or_forbidden' })
+        return
+      }
+
+      if (!message?.trim()) {
+        respond({ ok: false, reason: 'empty_message' })
+        return
+      }
+
+      const resolvedUserName =
+        String(userName || '').trim() ||
+        users.get(socket.userId)?.name?.trim() ||
+        socket.userName ||
+        users.get(socket.userId)?.email?.split('@')[0] ||
+        `User-${String(socket.userId).slice(0, 6)}`
+      socket.userName = resolvedUserName
+
+      const chatMessage = {
+        id: randomUUID(),
+        clientMessageId: clientMessageId || null,
+        message: message.trim(),
+        userId: socket.userId,
+        userName: resolvedUserName,
+        createdAt: new Date().toISOString(),
+      }
+
+      project.chat.push(chatMessage)
+      project.updatedAt = chatMessage.createdAt
+      await persistProject(project)
+      await recordProjectEvent({
+        projectId,
+        userId: socket.userId,
+        actionType: 'chat_message_sent',
+        resourceType: 'chat_message',
+        resourceId: chatMessage.id,
+        details: { preview: chatMessage.message.slice(0, 120) },
+        activityType: 'chat_message_sent',
+        activityData: { preview: chatMessage.message.slice(0, 120), actorName: resolvedUserName },
+      })
+      io.to(projectRoom(projectId)).emit('chat:message', chatMessage)
+      respond({ ok: true, id: chatMessage.id, createdAt: chatMessage.createdAt })
+    } catch (chatError) {
+      console.error('[collab] chat:send failed', {
+        projectId,
+        userId: socket.userId,
+        error: chatError?.message || 'unknown_error',
+      })
+      respond({ ok: false, reason: 'server_error', message: chatError?.message || 'Unknown error' })
+      socket.emit('error:event', { message: `Chat send failed: ${chatError?.message || 'Unknown error'}` })
+    }
   })
 
   socket.on('terminal:run', ({ projectId, terminalId, command, shellProfile }) => {

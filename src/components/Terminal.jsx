@@ -43,11 +43,25 @@ const TERMINAL_PROFILES = isWindowsHost
     ]
 
 const DEFAULT_TERMINAL_PROFILE_ID = TERMINAL_PROFILES[0]?.id || 'powershell'
+const MIN_TERMINAL_HEIGHT = 170
+const DEFAULT_TERMINAL_HEIGHT = 240
 
 const profileLabelById = new Map(TERMINAL_PROFILES.map((profile) => [profile.id, profile.label]))
 
 const getTerminalProfileLabel = (profileId = '') =>
   profileLabelById.get(String(profileId || '').trim()) || profileLabelById.get(DEFAULT_TERMINAL_PROFILE_ID) || 'Shell'
+
+const getTerminalHeightBounds = (parentHeight = 0) => {
+  const safeParentHeight = Number(parentHeight) > 0 ? Number(parentHeight) : Math.floor(window.innerHeight * 0.8)
+  const minHeight = MIN_TERMINAL_HEIGHT
+  const maxHeight = Math.max(250, safeParentHeight - 220)
+  return { minHeight, maxHeight }
+}
+
+const clampTerminalHeight = (height, parentHeight = 0) => {
+  const { minHeight, maxHeight } = getTerminalHeightBounds(parentHeight)
+  return Math.max(minHeight, Math.min(maxHeight, Math.floor(Number(height) || DEFAULT_TERMINAL_HEIGHT)))
+}
 
 let terminalIdCounter = 1
 const nextTerminalId = () => {
@@ -102,7 +116,7 @@ const Terminal = ({ projectId, projectName, token, userId, ownerId, sharedTermin
   const [isCreateMenuOpen, setIsCreateMenuOpen] = useState(false)
   const [sharedReadOnly, setSharedReadOnly] = useState(false)
   const [terminalHeight, setTerminalHeight] = useState(() =>
-    typeof window !== 'undefined' ? Math.max(240, Math.floor(window.innerHeight * 0.35)) : 320,
+    typeof window !== 'undefined' ? clampTerminalHeight(DEFAULT_TERMINAL_HEIGHT, window.innerHeight * 0.8) : DEFAULT_TERMINAL_HEIGHT,
   )
   const [isResizing, setIsResizing] = useState(false)
   const terminalContainerRef = useRef(null)
@@ -150,6 +164,19 @@ const Terminal = ({ projectId, projectName, token, userId, ownerId, sharedTermin
   }, [activeTerminalId])
 
   useEffect(() => {
+    const onResize = () => {
+      const parentPanel = terminalContainerRef.current?.closest('.editor-panel')
+      const parentHeight = parentPanel?.clientHeight || Math.floor(window.innerHeight * 0.8)
+      setTerminalHeight((prev) => clampTerminalHeight(prev, parentHeight))
+    }
+
+    window.addEventListener('resize', onResize)
+    return () => {
+      window.removeEventListener('resize', onResize)
+    }
+  }, [])
+
+  useEffect(() => {
     if (!isResizing) return undefined
 
     const previousUserSelect = document.body.style.userSelect
@@ -162,9 +189,7 @@ const Terminal = ({ projectId, projectName, token, userId, ownerId, sharedTermin
 
       const parentPanel = terminalContainerRef.current?.closest('.editor-panel')
       const parentHeight = parentPanel?.clientHeight || Math.floor(window.innerHeight * 0.8)
-      const minHeight = 240
-      const maxHeight = Math.max(280, parentHeight - 48)
-      const nextHeight = Math.max(minHeight, Math.min(maxHeight, resizeStartHeightRef.current + upwardDelta))
+      const nextHeight = clampTerminalHeight(resizeStartHeightRef.current + upwardDelta, parentHeight)
       setTerminalHeight(nextHeight)
     }
 
