@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { apiRequest } from '../lib/api'
 import { useAuth } from '../context/AuthContext'
+import Navbar from '../components/Navbar'
 
 const emptyProfile = {
   name: '',
@@ -144,16 +145,21 @@ const ProfilePage = () => {
 
   if (loading) {
     return (
-      <section className="profile-page-wrap">
-        <div className="card profile-card">
-          <p>Loading profile...</p>
-        </div>
-      </section>
+      <>
+        <Navbar variant="app" />
+        <section className="profile-page-wrap" style={{ paddingTop: '5rem' }}>
+          <div className="card profile-card">
+            <p>Loading profile...</p>
+          </div>
+        </section>
+      </>
     )
   }
 
   return (
-    <section className="profile-page-wrap">
+    <>
+      <Navbar variant="app" />
+      <section className="profile-page-wrap" style={{ paddingTop: '5rem' }}>
       <div className="card profile-card">
         <div className="profile-head">
           <h2>Edit Profile</h2>
@@ -252,7 +258,8 @@ const ProfilePage = () => {
           </div>
         </div>
       )}
-    </section>
+      </section>
+    </>
   )
 }
 
