@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import Navbar from '../components/Navbar'
 
 const featureItems = [
   {
@@ -90,36 +91,7 @@ const LandingPage = () => {
       className={`${theme === 'dark' ? 'dark' : ''} scroll-smooth bg-slate-100 font-['Questrial',sans-serif] text-slate-900 antialiased dark:bg-[#05070d] dark:text-slate-100`}
     >
       <div className="relative overflow-hidden bg-[radial-gradient(circle_at_14%_16%,rgba(15,23,42,0.16),transparent_36%),radial-gradient(circle_at_86%_8%,rgba(71,85,105,0.16),transparent_42%),linear-gradient(165deg,#f8fafc_0%,#ffffff_53%,#f1f5f9_100%)] dark:bg-[radial-gradient(circle_at_14%_16%,rgba(148,163,184,0.14),transparent_36%),radial-gradient(circle_at_86%_8%,rgba(71,85,105,0.14),transparent_42%),linear-gradient(165deg,#03060d_0%,#06080e_58%,#020308_100%)]">
-        <header className="fixed inset-x-0 top-0 z-40 px-3 py-3">
-          <nav className="mx-auto flex w-full max-w-7xl flex-wrap items-center justify-between gap-3 rounded-full border border-slate-300/70 bg-white/80 px-4 py-2 shadow-lg shadow-slate-300/40 backdrop-blur-lg dark:border-slate-700/70 dark:bg-black dark:shadow-black/50">
-          <img src={theme === 'dark' ? '/branding/logo1.png' : '/branding/logo2.png'} alt="Logo" className="h-12 w-22 rounded-full" />
-          
-
-            <div className="flex flex-wrap items-center justify-center gap-4 text-xs font-bold uppercase tracking-[0.14em] text-slate-600 dark:text-slate-300">
-              <a href="#about" className="hover:text-slate-900 dark:hover:text-white">About</a>
-              <a href="#workflow" className="hover:text-slate-900 dark:hover:text-white">Workflow</a>
-              <a href="#demo" className="hover:text-slate-900 dark:hover:text-white">Demo</a>
-              <a href="#voices" className="hover:text-slate-900 dark:hover:text-white">Voices</a>
-              <a href="#join" className="hover:text-slate-900 dark:hover:text-white">Join</a>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))}
-                className="rounded-full border border-slate-300 bg-white px-3 py-2 text-[11px] font-bold uppercase tracking-[0.11em] text-slate-800 transition hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
-              >
-                {theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
-              </button>
-              <Link
-                to={isAuthenticated ? '/dashboard' : '/auth'}
-                className="rounded-full border border-zinc-900 bg-zinc-900 px-4 py-2 text-[11px] font-bold uppercase tracking-[0.12em] text-white transition hover:bg-black dark:border-zinc-200 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
-              >
-                {isAuthenticated ? 'Open Dashboard' : 'Start Coding'}
-              </Link>
-            </div>
-          </nav>
-        </header>
+        <Navbar variant="landing" theme={theme} setTheme={setTheme} />
 
         <section className="relative mx-auto flex min-h-screen w-full max-w-7xl items-center px-4 pb-16 pt-36 md:px-6">
           <div className="absolute -right-20 top-20 hidden h-96 w-96 rounded-full bg-slate-300/30 blur-3xl dark:block" />

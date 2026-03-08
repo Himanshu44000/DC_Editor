@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { apiRequest } from '../lib/api'
 import { useAuth } from '../context/AuthContext'
-import AppHeader from '../components/AppHeader'
+import Navbar from '../components/Navbar'
 
 const DashboardPage = () => {
   const { token, user, getAuthToken } = useAuth()
@@ -36,15 +36,13 @@ const DashboardPage = () => {
     isPrivate: true,
   })
 
-  // Load templates based on projectType
   useEffect(() => {
     const loadTemplates = async () => {
       try {
         const category = createForm.projectType === 'practice' ? 'practice' : 'project'
         const data = await apiRequest(`/templates?category=${category}`)
         setTemplates(data.templates || [])
-        
-        // Set default template based on mode
+
         if (data.templates?.length) {
           const defaultTemplate = data.templates[0]
           const defaultVariantId = defaultTemplate.defaultVariantId || defaultTemplate.variants?.[0]?.id || ''
@@ -176,6 +174,9 @@ const DashboardPage = () => {
       variant.id ===
       (createForm.templateVariantId || selectedTemplate?.defaultVariantId || selectedTemplateVariants[0]?.id || ''),
   )
+  const builtProjects = useMemo(() => projects.filter((project) => project.role === 'owner'), [projects])
+  const sharedProjects = useMemo(() => projects.filter((project) => project.role !== 'owner'), [projects])
+  const editableProjectsCount = useMemo(() => projects.filter((project) => project.canEdit).length, [projects])
   const templateById = useMemo(
     () => new Map((allTemplates || []).map((template) => [template.id, template])),
     [allTemplates],
@@ -198,9 +199,9 @@ const DashboardPage = () => {
           String(project?.language || '').trim().toLowerCase(),
       )
       const fallback = variants.find((variant) => variant.id === template.defaultVariantId) || variants[0]
-      const selectedVariant = byId || byLanguage || fallback
+      const resolvedVariant = byId || byLanguage || fallback
 
-      return selectedVariant ? `${base} (${selectedVariant.label})` : base
+      return resolvedVariant ? `${base} (${resolvedVariant.label})` : base
     },
     [templateById],
   )
@@ -397,215 +398,352 @@ const DashboardPage = () => {
     }
   }
 
+  const renderProjectActions = (project) => (
+    <div className="flex items-center gap-2">
+      {project.role === 'owner' && (
+        <button
+          type="button"
+          className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300/70 bg-white/80 text-slate-700 transition hover:-translate-y-0.5 hover:bg-white dark:border-slate-700/80 dark:bg-slate-900/70 dark:text-slate-200 dark:hover:bg-slate-800"
+          title={githubStatus.connected ? `Upload ${project.name} to GitHub` : 'Connect GitHub to upload projects'}
+          aria-label={githubStatus.connected ? `Upload ${project.name} to GitHub` : 'Connect GitHub to upload projects'}
+          onClick={() => openGithubUploadDialog(project)}
+        >
+          <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" className="h-4 w-4">
+            <path
+              fill="currentColor"
+              d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.01.08-2.1 0 0 .67-.21 2.2.82a7.56 7.56 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.09.16 1.9.08 2.1.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"
+            />
+          </svg>
+        </button>
+      )}
+      {project.canEdit && (
+        <button
+          type="button"
+          className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300/70 bg-white/80 text-slate-700 transition hover:-translate-y-0.5 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700/80 dark:bg-slate-900/70 dark:text-slate-200 dark:hover:bg-slate-800"
+          title={`Download ${project.name} as ZIP`}
+          aria-label={`Download ${project.name} as ZIP`}
+          onClick={() => downloadProjectZip(project)}
+          disabled={downloadingProjectId === project.id}
+        >
+          {downloadingProjectId === project.id ? (
+            <span className="text-xs">...</span>
+          ) : (
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" className="h-4 w-4">
+              <path
+                fill="currentColor"
+                d="M12 3a1 1 0 0 1 1 1v9.59l2.3-2.29a1 1 0 1 1 1.4 1.42l-4 3.97a1 1 0 0 1-1.4 0l-4-3.97a1 1 0 1 1 1.4-1.42L11 13.59V4a1 1 0 0 1 1-1Zm-7 15a1 1 0 0 1 1 1v1h12v-1a1 1 0 1 1 2 0v2a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1Z"
+              />
+            </svg>
+          )}
+        </button>
+      )}
+      {project.role === 'owner' && (
+        <button
+          type="button"
+          className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-red-300/70 bg-red-50/80 text-red-700 transition hover:-translate-y-0.5 hover:bg-red-100 dark:border-red-700/60 dark:bg-red-950/40 dark:text-red-300 dark:hover:bg-red-900/50"
+          title={`Delete ${project.name}`}
+          aria-label={`Delete ${project.name}`}
+          onClick={() => setProjectToDelete(project)}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" className="h-4 w-4">
+            <path
+              fill="currentColor"
+              d="M9 3a1 1 0 0 0-1 1v1H5a1 1 0 1 0 0 2h1v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7h1a1 1 0 1 0 0-2h-3V4a1 1 0 0 0-1-1H9Zm1 2h4v1h-4V5Zm-2 4a1 1 0 0 1 1 1v8a1 1 0 1 1-2 0v-8a1 1 0 0 1 1-1Zm8 0a1 1 0 0 1 1 1v8a1 1 0 1 1-2 0v-8a1 1 0 0 1 1-1Zm-4 0a1 1 0 0 1 1 1v8a1 1 0 1 1-2 0v-8a1 1 0 0 1 1-1Z"
+            />
+          </svg>
+        </button>
+      )}
+    </div>
+  )
+
+  const renderProjectCard = (project) => (
+    <article
+      key={project.id}
+      className="dash-project-card dashboard-reveal group flex flex-col gap-4 rounded-2xl border border-slate-300/60 bg-white/70 p-4 shadow-lg shadow-slate-200/60 backdrop-blur-md transition hover:-translate-y-0.5 hover:border-slate-400/70 hover:shadow-xl dark:border-slate-700/80 dark:bg-slate-900/70 dark:shadow-black/35 dark:hover:border-slate-500/70"
+    >
+      <button className="w-full text-left" type="button" onClick={() => navigate(`/project/${project.id}`)}>
+        <p className="font-['Manrope',sans-serif] text-[10px] font-extrabold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
+          {project.projectType === 'practice' ? 'Practice Workspace' : 'Full Project Workspace'}
+        </p>
+        <h3 className="mt-1 text-lg font-semibold text-slate-900 dark:text-slate-100">{project.name}</h3>
+        <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">Template: {getProjectTemplateDisplay(project)}</p>
+        <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">Updated: {new Date(project.updatedAt).toLocaleString()}</p>
+      </button>
+
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="rounded-full border border-slate-300/80 bg-slate-100 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.11em] text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+          {project.role}
+        </span>
+        {renderProjectActions(project)}
+      </div>
+    </article>
+  )
+
   return (
     <>
-      <AppHeader />
-      <section className="dashboard-grid">
-        <div className="card">
-        <h2>Create Project</h2>
-        <form onSubmit={createProject} className="stack-sm">
-          <label>
-            Project Name
-            <input
-              value={createForm.name}
-              onChange={(event) => {
-                setCreateError('')
-                setCreateForm((prev) => ({ ...prev, name: event.target.value }))
-              }}
-              required
-              placeholder="My Awesome Project"
-            />
-          </label>
-          {createError && <p className="error-text">{createError}</p>}
+      <Navbar variant="app" />
+      <section className="dashboard-modern -m-4 min-h-screen overflow-hidden bg-[radial-gradient(circle_at_12%_8%,rgba(148,163,184,0.24),transparent_34%),linear-gradient(170deg,#f8fafc_0%,#ffffff_52%,#eef2f7_100%)] px-4 pb-16 pt-24 font-['Questrial',sans-serif] text-slate-900 antialiased dark:bg-[radial-gradient(circle_at_12%_8%,rgba(59,130,246,0.18),transparent_34%),linear-gradient(170deg,#01030a_0%,#020611_55%,#00030c_100%)] dark:text-slate-100 md:px-6">
+        <div className="mx-auto max-w-7xl">
+          <div className="dash-hero dashboard-reveal relative overflow-hidden rounded-3xl border border-slate-300/60 bg-[radial-gradient(circle_at_8%_12%,rgba(148,163,184,0.2),transparent_35%),radial-gradient(circle_at_90%_0%,rgba(148,163,184,0.2),transparent_40%),linear-gradient(165deg,#f8fafc_0%,#ffffff_53%,#f1f5f9_100%)] p-6 shadow-xl shadow-slate-300/35 dark:border-slate-700/70 dark:bg-[radial-gradient(circle_at_8%_12%,rgba(148,163,184,0.12),transparent_35%),radial-gradient(circle_at_90%_0%,rgba(71,85,105,0.16),transparent_40%),linear-gradient(165deg,#03060d_0%,#06080e_58%,#020308_100%)] dark:shadow-black/45 md:p-8">
+            <p className="font-['Manrope',sans-serif] text-xs font-extrabold uppercase tracking-[0.2em] text-slate-600 dark:text-slate-300">
+              Workspace Dashboard
+            </p>
+            <h1 className="mt-3 text-3xl font-medium uppercase tracking-[0.03em] text-slate-900 dark:text-slate-100 sm:text-4xl">
+              Build fast, practice hard, collaborate clearly.
+            </h1>
+            <p className="mt-3 max-w-3xl text-sm leading-relaxed text-slate-700 dark:text-slate-300">
+              Launch new projects, join shared rooms, and manage all your workspaces from one control center.
+            </p>
 
-          <label>
-            Project Type
-            <select
-              value={createForm.projectType}
-              onChange={(event) => setCreateForm((prev) => ({ ...prev, projectType: event.target.value }))}
-            >
-              <option value="practice">🎯 Practice/DSA - Simple editor with Run button</option>
-              <option value="project">💼 Full Project - File tree + Terminal</option>
-            </select>
-          </label>
-
-          {createForm.projectType === 'practice' && (
-            <label>
-              Language
-              <select
-                value={createForm.templateId}
-                onChange={(event) => {
-                  const nextTemplate = templates.find((template) => template.id === event.target.value)
-                  const nextVariantId = nextTemplate?.defaultVariantId || nextTemplate?.variants?.[0]?.id || ''
-                  setCreateForm((prev) => ({
-                    ...prev,
-                    templateId: event.target.value,
-                    templateVariantId: nextVariantId,
-                  }))
-                }}
-              >
-                {templates.map((template) => (
-                  <option key={template.id} value={template.id}>
-                    {template.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-
-          {createForm.projectType === 'project' && (
-            <>
-              <label>
-                Template
-                <select
-                  value={createForm.templateId}
-                  onChange={(event) => {
-                    const nextTemplate = templates.find((template) => template.id === event.target.value)
-                    const nextVariantId = nextTemplate?.defaultVariantId || nextTemplate?.variants?.[0]?.id || ''
-                    setCreateForm((prev) => ({
-                      ...prev,
-                      templateId: event.target.value,
-                      templateVariantId: nextVariantId,
-                    }))
-                  }}
-                >
-                  {templates.map((template) => (
-                    <option key={template.id} value={template.id}>
-                      {template.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              {selectedTemplate?.description && <p className="role-note">{selectedTemplate.description}</p>}
-
-              {selectedTemplateVariants.length > 0 && (
-                <label>
-                  Variant
-                  <select
-                    value={createForm.templateVariantId || selectedTemplate.defaultVariantId || selectedTemplateVariants[0]?.id || ''}
-                    onChange={(event) =>
-                      setCreateForm((prev) => ({
-                        ...prev,
-                        templateVariantId: event.target.value,
-                      }))
-                    }
+            <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <article className="dash-stat dashboard-reveal rounded-2xl border border-slate-300/70 bg-white/75 p-4 shadow-lg shadow-slate-200/60 backdrop-blur-md dark:border-slate-700/80 dark:bg-slate-900/70 dark:shadow-black/35">
+                <p className="text-xs uppercase tracking-[0.12em] text-slate-600 dark:text-slate-400">Total Workspaces</p>
+                <p className="mt-1 text-2xl font-semibold">{projects.length}</p>
+              </article>
+              <article className="dash-stat dashboard-reveal rounded-2xl border border-slate-300/70 bg-white/75 p-4 shadow-lg shadow-slate-200/60 backdrop-blur-md dark:border-slate-700/80 dark:bg-slate-900/70 dark:shadow-black/35">
+                <p className="text-xs uppercase tracking-[0.12em] text-slate-600 dark:text-slate-400">Built By You</p>
+                <p className="mt-1 text-2xl font-semibold">{builtProjects.length}</p>
+              </article>
+              <article className="dash-stat dashboard-reveal rounded-2xl border border-slate-300/70 bg-white/75 p-4 shadow-lg shadow-slate-200/60 backdrop-blur-md dark:border-slate-700/80 dark:bg-slate-900/70 dark:shadow-black/35">
+                <p className="text-xs uppercase tracking-[0.12em] text-slate-600 dark:text-slate-400">Editable Rooms</p>
+                <p className="mt-1 text-2xl font-semibold">{editableProjectsCount}</p>
+              </article>
+              <article className="dash-stat dashboard-reveal rounded-2xl border border-slate-300/70 bg-white/75 p-4 shadow-lg shadow-slate-200/60 backdrop-blur-md dark:border-slate-700/80 dark:bg-slate-900/70 dark:shadow-black/35">
+                <p className="text-xs uppercase tracking-[0.12em] text-slate-600 dark:text-slate-400">GitHub</p>
+                <p className="mt-1 text-sm font-semibold">
+                  {githubStatus.connected ? `Connected as ${githubStatus.username || 'account'}` : 'Not connected'}
+                </p>
+                {!githubStatus.connected && (
+                  <button
+                    type="button"
+                    onClick={connectGithub}
+                    className="dash-secondary-btn mt-2 rounded-full border border-slate-300 bg-white px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.1em] text-slate-700 transition hover:bg-slate-100 dark:border-slate-900 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-black"
                   >
-                    {selectedTemplateVariants.map((variant) => (
-                      <option key={variant.id} value={variant.id}>
-                        {variant.label}
-                      </option>
-                    ))}
+                    Connect
+                  </button>
+                )}
+              </article>
+            </div>
+          </div>
+
+          <div className="mt-12 grid gap-8 xl:grid-cols-2">
+            <div className="dash-panel dashboard-reveal rounded-2xl border border-slate-300/70 bg-white/75 p-6 shadow-xl shadow-slate-200/60 backdrop-blur-md dark:border-slate-700/80 dark:bg-slate-900/70 dark:shadow-black/35">
+              <p className="font-['Manrope',sans-serif] text-xs font-extrabold uppercase tracking-[0.18em] text-slate-600 dark:text-slate-300">
+                <span className="mr-2">🚀</span>
+                Create Project
+              </p>
+              <form onSubmit={createProject} className="mt-4 grid gap-3">
+                <label>
+                  Project Name
+                  <input
+                    value={createForm.name}
+                    onChange={(event) => {
+                      setCreateError('')
+                      setCreateForm((prev) => ({ ...prev, name: event.target.value }))
+                    }}
+                    required
+                    placeholder="My Awesome Project"
+                  />
+                </label>
+                {createError && <p className="m-0 text-sm text-red-500">{createError}</p>}
+
+                <label>
+                  Project Type
+                  <select
+                    value={createForm.projectType}
+                    onChange={(event) => setCreateForm((prev) => ({ ...prev, projectType: event.target.value }))}
+                  >
+                    <option value="practice">Practice/DSA - Simple editor with Run button</option>
+                    <option value="project">Full Project - File tree + Terminal</option>
                   </select>
                 </label>
-              )}
 
-              {selectedVariant?.description && <p className="role-note">{selectedVariant.description}</p>}
-            </>
-          )}
+                {createForm.projectType === 'practice' && (
+                  <label>
+                    Language
+                    <select
+                      value={createForm.templateId}
+                      onChange={(event) => {
+                        const nextTemplate = templates.find((template) => template.id === event.target.value)
+                        const nextVariantId = nextTemplate?.defaultVariantId || nextTemplate?.variants?.[0]?.id || ''
+                        setCreateForm((prev) => ({
+                          ...prev,
+                          templateId: event.target.value,
+                          templateVariantId: nextVariantId,
+                        }))
+                      }}
+                    >
+                      {templates.map((template) => (
+                        <option key={template.id} value={template.id}>
+                          {template.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
 
-          <button type="submit">Create Project</button>
-        </form>
-        </div>
-
-        <div className="card">
-        <h2>Join by Invite Code</h2>
-        <form onSubmit={joinProject} className="stack-sm">
-          <input
-            value={inviteCode}
-            onChange={(event) => setInviteCode(event.target.value.toUpperCase())}
-            required
-            placeholder="Enter invite code"
-          />
-          <button type="submit">Join Project</button>
-        </form>
-        </div>
-
-        <div className="card wide">
-          <h2>Your Projects</h2>
-          <p className="role-note">
-            GitHub: {githubStatus.connected ? `Connected as ${githubStatus.username || 'account'}` : 'Not connected'}
-          </p>
-          {loading ? (
-            <p>Loading projects...</p>
-          ) : projects.length === 0 ? (
-            <p>No projects yet. Create one to start collaborating.</p>
-          ) : (
-            <div className="project-list">
-              {projects.map((project) => (
-                <div key={project.id} className="project-item-row">
-                  <button
-                    className="project-item"
-                    type="button"
-                    onClick={() => navigate(`/project/${project.id}`)}
-                  >
-                    <strong>{project.name}</strong>
-                    <span>
-                      {project.projectType === 'practice' ? '🎯 Practice Mode' : '💼 Full Project'} • {project.role}
-                    </span>
-                    <span>Template: {getProjectTemplateDisplay(project)}</span>
-                    <span>Updated: {new Date(project.updatedAt).toLocaleString()}</span>
-                  </button>
-                  <div className="project-item-actions">
-                    {project.role === 'owner' && (
-                      <button
-                        type="button"
-                        className="project-github-btn"
-                        title={githubStatus.connected ? `Upload ${project.name} to GitHub` : 'Connect GitHub to upload projects'}
-                        aria-label={githubStatus.connected ? `Upload ${project.name} to GitHub` : 'Connect GitHub to upload projects'}
-                        onClick={() => openGithubUploadDialog(project)}
+                {createForm.projectType === 'project' && (
+                  <>
+                    <label>
+                      Template
+                      <select
+                        value={createForm.templateId}
+                        onChange={(event) => {
+                          const nextTemplate = templates.find((template) => template.id === event.target.value)
+                          const nextVariantId = nextTemplate?.defaultVariantId || nextTemplate?.variants?.[0]?.id || ''
+                          setCreateForm((prev) => ({
+                            ...prev,
+                            templateId: event.target.value,
+                            templateVariantId: nextVariantId,
+                          }))
+                        }}
                       >
-                        <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-                          <path
-                            fill="currentColor"
-                            d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.01.08-2.1 0 0 .67-.21 2.2.82a7.56 7.56 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.09.16 1.9.08 2.1.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"
-                          />
-                        </svg>
-                      </button>
+                        {templates.map((template) => (
+                          <option key={template.id} value={template.id}>
+                            {template.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    {selectedTemplate?.description && <p className="m-0 text-sm text-slate-600 dark:text-slate-300">{selectedTemplate.description}</p>}
+
+                    {selectedTemplateVariants.length > 0 && (
+                      <label>
+                        Variant
+                        <select
+                          value={createForm.templateVariantId || selectedTemplate.defaultVariantId || selectedTemplateVariants[0]?.id || ''}
+                          onChange={(event) =>
+                            setCreateForm((prev) => ({
+                              ...prev,
+                              templateVariantId: event.target.value,
+                            }))
+                          }
+                        >
+                          {selectedTemplateVariants.map((variant) => (
+                            <option key={variant.id} value={variant.id}>
+                              {variant.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
                     )}
-                    {project.canEdit && (
-                      <button
-                        type="button"
-                        className="project-download-btn"
-                        title={`Download ${project.name} as ZIP`}
-                        aria-label={`Download ${project.name} as ZIP`}
-                        onClick={() => downloadProjectZip(project)}
-                        disabled={downloadingProjectId === project.id}
-                      >
-                        {downloadingProjectId === project.id ? '...' : '⬇'}
-                      </button>
-                    )}
-                    {project.role === 'owner' && (
-                      <button
-                        type="button"
-                        className="project-delete-btn"
-                        title={`Delete ${project.name}`}
-                        onClick={() => setProjectToDelete(project)}
-                      >
-                        🗑️
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
+
+                    {selectedVariant?.description && <p className="m-0 text-sm text-slate-600 dark:text-slate-300">{selectedVariant.description}</p>}
+                  </>
+                )}
+
+                <button
+                  type="submit"
+                  className="dash-primary-btn mt-2 rounded-xl border border-zinc-900 bg-zinc-900 px-4 py-2.5 text-sm font-bold uppercase tracking-[0.11em] text-white transition hover:-translate-y-0.5 hover:bg-black dark:border-zinc-900 dark:bg-zinc-900 dark:text-white dark:hover:bg-black"
+                >
+                  Create Project
+                </button>
+              </form>
             </div>
-          )}
-        </div>
 
-        {error && <p className="error-text">{error}</p>}
-        {githubMessage && <p className="profile-success">{githubMessage}</p>}
+            <div className="dash-panel dashboard-reveal rounded-2xl border border-slate-300/70 bg-white/75 p-6 shadow-xl shadow-slate-200/60 backdrop-blur-md dark:border-slate-700/80 dark:bg-slate-900/70 dark:shadow-black/35">
+              <p className="font-['Manrope',sans-serif] text-xs font-extrabold uppercase tracking-[0.18em] text-slate-600 dark:text-slate-300">
+                <span className="mr-2">🔗</span>
+                Join by Invite Code
+              </p>
+              <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
+                Enter a workspace code from your teammate to join instantly.
+              </p>
+              <form onSubmit={joinProject} className="mt-4 grid gap-3">
+                <input
+                  value={inviteCode}
+                  onChange={(event) => setInviteCode(event.target.value.toUpperCase())}
+                  required
+                  placeholder="Enter invite code"
+                />
+                <button
+                  type="submit"
+                  className="dash-primary-btn rounded-xl border border-zinc-900 bg-zinc-900 px-4 py-2.5 text-sm font-bold uppercase tracking-[0.11em] text-white transition hover:-translate-y-0.5 hover:bg-black dark:border-zinc-900 dark:bg-zinc-900 dark:text-white dark:hover:bg-black"
+                >
+                  Join Project
+                </button>
+              </form>
+
+              <div className="mt-8 rounded-xl border border-slate-300/70 bg-slate-50/80 p-4 dark:border-slate-700 dark:bg-slate-950/45">
+                <p className="font-['Manrope',sans-serif] text-[11px] font-extrabold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
+                  Quick Notes
+                </p>
+                <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-600 dark:text-slate-300">
+                  <li>Practice mode opens lightweight coding workspace.</li>
+                  <li>Full project mode includes file tree and terminal support.</li>
+                  <li>Owner projects can be uploaded to GitHub directly.</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-12 grid gap-8 xl:grid-cols-2">
+            <section className="dash-panel dashboard-reveal rounded-2xl border border-slate-300/70 bg-white/75 p-6 shadow-xl shadow-slate-200/60 backdrop-blur-md dark:border-slate-700/80 dark:bg-slate-900/70 dark:shadow-black/35">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                <p className="font-['Manrope',sans-serif] text-xs font-extrabold uppercase tracking-[0.18em] text-slate-600 dark:text-slate-300">
+                  <span className="mr-2">📦</span>
+                  Projects Built by You
+                </p>
+                <span className="rounded-full border border-slate-300/80 bg-slate-100 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.11em] text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                  {builtProjects.length}
+                </span>
+              </div>
+              {loading ? (
+                <p className="text-sm text-slate-600 dark:text-slate-300">Loading projects...</p>
+              ) : builtProjects.length === 0 ? (
+                <p className="text-sm text-slate-600 dark:text-slate-300">No owned projects yet. Create one to get started.</p>
+              ) : (
+                <div className="grid gap-3">{builtProjects.map((project) => renderProjectCard(project))}</div>
+              )}
+            </section>
+
+            <section className="dash-panel dashboard-reveal rounded-2xl border border-slate-300/70 bg-white/75 p-6 shadow-xl shadow-slate-200/60 backdrop-blur-md dark:border-slate-700/80 dark:bg-slate-900/70 dark:shadow-black/35">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                <p className="font-['Manrope',sans-serif] text-xs font-extrabold uppercase tracking-[0.18em] text-slate-600 dark:text-slate-300">
+                  <span className="mr-2">🤝</span>
+                  Shared With You
+                </p>
+                <span className="rounded-full border border-slate-300/80 bg-slate-100 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.11em] text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                  {sharedProjects.length}
+                </span>
+              </div>
+              {loading ? (
+                <p className="text-sm text-slate-600 dark:text-slate-300">Loading shared projects...</p>
+              ) : sharedProjects.length === 0 ? (
+                <p className="text-sm text-slate-600 dark:text-slate-300">No shared projects yet. Join with an invite code.</p>
+              ) : (
+                <div className="grid gap-3">{sharedProjects.map((project) => renderProjectCard(project))}</div>
+              )}
+            </section>
+          </div>
+
+          {error && <p className="mt-4 text-sm text-red-500">{error}</p>}
+          {githubMessage && <p className="mt-4 text-sm text-emerald-500">{githubMessage}</p>}
+        </div>
 
         {projectToDelete && (
-          <div className="tree-confirm-backdrop" onClick={() => (isDeleting ? null : setProjectToDelete(null))}>
-            <div className="tree-confirm-dialog" onClick={(event) => event.stopPropagation()}>
-              <p>Are you sure you want to permanently delete "{projectToDelete.name}"?</p>
-              <div className="tree-confirm-actions">
-                <button type="button" className="confirm-yes" onClick={deleteProject} disabled={isDeleting}>
-                  {isDeleting ? 'Deleting...' : 'Yes'}
+          <div
+            className="fixed inset-0 z-80 grid place-items-center bg-slate-950/45 px-4 backdrop-blur-sm"
+            onClick={() => (isDeleting ? null : setProjectToDelete(null))}
+          >
+            <div
+              className="w-full max-w-md rounded-2xl border border-slate-300/70 bg-white p-5 text-slate-900 shadow-2xl shadow-slate-300/40 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:shadow-black/50"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <p className="text-sm">Are you sure you want to permanently delete "{projectToDelete.name}"?</p>
+              <div className="mt-4 flex justify-end gap-2">
+                <button
+                  type="button"
+                  className="rounded-lg border border-red-600 bg-red-600 px-3 py-2 text-xs font-bold uppercase tracking-[0.08em] text-white transition hover:bg-red-700 disabled:opacity-60"
+                  onClick={deleteProject}
+                  disabled={isDeleting}
+                >
+                  {isDeleting ? 'Deleting...' : 'Yes, delete'}
                 </button>
                 <button
                   type="button"
-                  className="confirm-cancel"
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold uppercase tracking-[0.08em] text-slate-700 transition hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
                   onClick={() => setProjectToDelete(null)}
                   disabled={isDeleting}
                 >
@@ -617,88 +755,95 @@ const DashboardPage = () => {
         )}
 
         {githubDialogProject && (
-          <div className="tree-confirm-backdrop" onClick={() => (isUploadingGithub ? null : setGithubDialogProject(null))}>
-            <div className="tree-confirm-dialog github-upload-dialog" onClick={(event) => event.stopPropagation()}>
-              <p>
-                Upload "{githubDialogProject.name}" to GitHub
-              </p>
+          <div
+            className="fixed inset-0 z-80 grid place-items-center bg-slate-950/45 px-4 backdrop-blur-sm"
+            onClick={() => (isUploadingGithub ? null : setGithubDialogProject(null))}
+          >
+            <div
+              className="w-full max-w-lg rounded-2xl border border-slate-300/70 bg-white p-5 text-slate-900 shadow-2xl shadow-slate-300/40 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:shadow-black/50"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <p className="font-semibold">Upload "{githubDialogProject.name}" to GitHub</p>
 
-              <label>
-                Upload Mode
-                <select
-                  value={githubUploadForm.mode}
-                  onChange={(event) =>
-                    setGithubUploadForm((prev) => ({
-                      ...prev,
-                      mode: event.target.value,
-                    }))
-                  }
-                >
-                  <option value="existing">Use Existing Repository</option>
-                  <option value="new">Create New Repository</option>
-                </select>
-              </label>
-
-              {githubUploadForm.mode === 'existing' ? (
+              <div className="mt-4 grid gap-3">
                 <label>
-                  Repository
+                  Upload Mode
                   <select
-                    value={githubUploadForm.repositoryFullName}
+                    value={githubUploadForm.mode}
                     onChange={(event) =>
                       setGithubUploadForm((prev) => ({
                         ...prev,
-                        repositoryFullName: event.target.value,
+                        mode: event.target.value,
                       }))
                     }
-                    disabled={isLoadingGithubRepos || githubRepos.length === 0}
                   >
-                    {githubRepos.map((repo) => (
-                      <option key={repo.fullName} value={repo.fullName}>
-                        {repo.fullName}
-                      </option>
-                    ))}
+                    <option value="existing">Use Existing Repository</option>
+                    <option value="new">Create New Repository</option>
                   </select>
                 </label>
-              ) : (
-                <>
+
+                {githubUploadForm.mode === 'existing' ? (
                   <label>
-                    New Repository Name
-                    <input
-                      value={githubUploadForm.repositoryName}
+                    Repository
+                    <select
+                      value={githubUploadForm.repositoryFullName}
                       onChange={(event) =>
                         setGithubUploadForm((prev) => ({
                           ...prev,
-                          repositoryName: event.target.value,
+                          repositoryFullName: event.target.value,
                         }))
                       }
-                      placeholder="my-project"
-                    />
+                      disabled={isLoadingGithubRepos || githubRepos.length === 0}
+                    >
+                      {githubRepos.map((repo) => (
+                        <option key={repo.fullName} value={repo.fullName}>
+                          {repo.fullName}
+                        </option>
+                      ))}
+                    </select>
                   </label>
-                  <label className="shared-terminal-toggle">
-                    <input
-                      type="checkbox"
-                      checked={githubUploadForm.isPrivate}
-                      onChange={(event) =>
-                        setGithubUploadForm((prev) => ({
-                          ...prev,
-                          isPrivate: event.target.checked,
-                        }))
-                      }
-                    />
-                    <span>Create as private repository</span>
-                  </label>
-                </>
-              )}
+                ) : (
+                  <>
+                    <label>
+                      New Repository Name
+                      <input
+                        value={githubUploadForm.repositoryName}
+                        onChange={(event) =>
+                          setGithubUploadForm((prev) => ({
+                            ...prev,
+                            repositoryName: event.target.value,
+                          }))
+                        }
+                        placeholder="my-project"
+                      />
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4"
+                        checked={githubUploadForm.isPrivate}
+                        onChange={(event) =>
+                          setGithubUploadForm((prev) => ({
+                            ...prev,
+                            isPrivate: event.target.checked,
+                          }))
+                        }
+                      />
+                      <span>Create as private repository</span>
+                    </label>
+                  </>
+                )}
 
-              {isLoadingGithubRepos && githubUploadForm.mode === 'existing' && <p>Loading repositories...</p>}
-              {!isLoadingGithubRepos && githubUploadForm.mode === 'existing' && githubRepos.length === 0 && (
-                <p className="role-note">No repositories found. Switch to "Create New Repository".</p>
-              )}
+                {isLoadingGithubRepos && githubUploadForm.mode === 'existing' && <p className="text-sm">Loading repositories...</p>}
+                {!isLoadingGithubRepos && githubUploadForm.mode === 'existing' && githubRepos.length === 0 && (
+                  <p className="text-sm text-slate-600 dark:text-slate-300">No repositories found. Switch to "Create New Repository".</p>
+                )}
+              </div>
 
-              <div className="tree-confirm-actions">
+              <div className="mt-4 flex justify-end gap-2">
                 <button
                   type="button"
-                  className="confirm-yes"
+                  className="rounded-lg border border-zinc-900 bg-zinc-900 px-3 py-2 text-xs font-bold uppercase tracking-[0.08em] text-white transition hover:bg-black disabled:opacity-60 dark:border-zinc-200 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
                   onClick={uploadProjectToGithub}
                   disabled={
                     isUploadingGithub ||
@@ -710,7 +855,7 @@ const DashboardPage = () => {
                 </button>
                 <button
                   type="button"
-                  className="confirm-cancel"
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold uppercase tracking-[0.08em] text-slate-700 transition hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
                   onClick={() => setGithubDialogProject(null)}
                   disabled={isUploadingGithub}
                 >

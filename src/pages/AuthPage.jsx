@@ -2,6 +2,7 @@ import { Navigate } from 'react-router-dom'
 import { SignIn, SignUp } from '@clerk/clerk-react'
 import { useAuth } from '../context/AuthContext'
 import { useState } from 'react'
+import Navbar from '../components/Navbar'
 
 const clerkAppearance = {
   variables: {
@@ -66,7 +67,9 @@ const AuthPage = () => {
   }
 
   return (
-    <div className="center-page">
+    <>
+      <Navbar variant="landing" />
+      <div className="center-page" style={{ paddingTop: '5rem' }}>
       <div className="card auth-card">
         <div className="auth-mode-switch">
           <button
@@ -102,6 +105,7 @@ const AuthPage = () => {
         )}
       </div>
     </div>
+    </>
   )
 }
 

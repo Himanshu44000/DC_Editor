@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Room, RoomEvent } from 'livekit-client'
+import { Room, RoomEvent, Track } from 'livekit-client'
 import { apiRequest } from '../lib/api'
 
 const MAX_VISIBLE_AVATARS = 5
@@ -28,6 +28,7 @@ const parseParticipantMeta = (participant, avatarOverrides = new Map()) => {
 
 const VoiceChannelPanel = ({ projectId, getAuthToken }) => {
   const roomRef = useRef(null)
+  const audioContainerRef = useRef(null)
   const avatarOverridesRef = useRef(new Map())
   const [participants, setParticipants] = useState([])
   const [isJoined, setIsJoined] = useState(false)
@@ -35,6 +36,32 @@ const VoiceChannelPanel = ({ projectId, getAuthToken }) => {
   const [isLeaving, setIsLeaving] = useState(false)
   const [isMuted, setIsMuted] = useState(true)
   const [error, setError] = useState('')
+
+  // Handle attaching remote audio tracks for playback
+  const attachTrack = useCallback((track, participant) => {
+    if (track.kind !== Track.Kind.Audio || participant.isLocal) return
+    
+    const container = audioContainerRef.current
+    if (!container) return
+
+    const audioElement = track.attach()
+    audioElement.id = `audio-${participant.identity}-${track.sid}`
+    container.appendChild(audioElement)
+  }, [])
+
+  // Handle detaching remote audio tracks
+  const detachTrack = useCallback((track, participant) => {
+    if (track.kind !== Track.Kind.Audio || participant.isLocal) return
+
+    const container = audioContainerRef.current
+    if (!container) return
+
+    const audioElement = container.querySelector(`#audio-${participant.identity}-${track.sid}`)
+    if (audioElement) {
+      track.detach(audioElement)
+      audioElement.remove()
+    }
+  }, [])
 
   const syncParticipants = useCallback((room, avatarOverrides = avatarOverridesRef.current) => {
     if (!room) {
@@ -103,6 +130,12 @@ const VoiceChannelPanel = ({ projectId, getAuthToken }) => {
     try {
       await room.localParticipant.setMicrophoneEnabled(false).catch(() => false)
       room.disconnect(true)
+      
+      // Clean up all audio elements
+      const container = audioContainerRef.current
+      if (container) {
+        container.innerHTML = ''
+      }
     } finally {
       roomRef.current = null
       setIsJoined(false)
@@ -118,6 +151,11 @@ const VoiceChannelPanel = ({ projectId, getAuthToken }) => {
       if (room) {
         room.disconnect(true)
         roomRef.current = null
+      }
+      // Clean up audio elements on unmount
+      const container = audioContainerRef.current
+      if (container) {
+        container.innerHTML = ''
       }
     }
   }, [])
@@ -178,8 +216,25 @@ const VoiceChannelPanel = ({ projectId, getAuthToken }) => {
         }
       })
 
+      // Handle remote audio track subscription for playback
+      room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
+        attachTrack(track, participant)
+      })
+      room.on(RoomEvent.TrackUnsubscribed, (track, publication, participant) => {
+        detachTrack(track, participant)
+      })
+
       await room.connect(serverUrl, token)
       await room.localParticipant.setMicrophoneEnabled(true)
+
+      // Attach audio tracks from participants who are already in the room
+      room.remoteParticipants.forEach((participant) => {
+        participant.audioTrackPublications.forEach((publication) => {
+          if (publication.track && publication.isSubscribed) {
+            attachTrack(publication.track, participant)
+          }
+        })
+      })
 
       roomRef.current = room
       setIsJoined(true)
@@ -218,6 +273,9 @@ const VoiceChannelPanel = ({ projectId, getAuthToken }) => {
 
   return (
     <div className="voice-channel-box stack-sm">
+      {/* Hidden container for remote audio playback */}
+      <div ref={audioContainerRef} style={{ display: 'none' }} />
+      
       <div className="voice-channel-head">
         <h4>Voice Channel</h4>
         <span className={`voice-channel-state ${isJoined ? 'on' : 'off'}`}>{isJoined ? 'Connected' : 'Idle'}</span>
