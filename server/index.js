@@ -165,6 +165,7 @@ const pendingWorkspaceFileSyncTimers = new Map()
 const PROJECT_PERSIST_DEBOUNCE_MS = 900
 const WORKSPACE_FILE_SYNC_DEBOUNCE_MS = 40
 const TERMINAL_WORKSPACES_ROOT = path.join(process.cwd(), '.tw')
+const TERMINAL_WORKSPACE_EPHEMERAL = String(process.env.TERMINAL_WORKSPACE_EPHEMERAL || 'true').toLowerCase() !== 'false'
 const LOCAL_STATE_PATH = path.join(process.cwd(), '.collab-state.json')
 const LIVE_PREVIEW_SESSION_TTL_MS = 1000 * 60 * 60 * 6
 let dbClient = null
@@ -2595,6 +2596,37 @@ const getProjectTerminalWorkspace = (projectId, userId) => {
   const key = `${String(projectId || '')}:${String(userId || '')}`
   const digest = createHash('sha1').update(key).digest('hex').slice(0, 16)
   return path.join(TERMINAL_WORKSPACES_ROOT, digest)
+}
+
+const hasActiveTerminalUsingWorkspace = (workspaceDir, excludeSessionKey = '') => {
+  const target = path.resolve(String(workspaceDir || ''))
+  if (!target) return false
+
+  for (const [sessionKey, session] of terminalSessions.entries()) {
+    if (excludeSessionKey && sessionKey === excludeSessionKey) continue
+    if (!session?.workspaceDir) continue
+    const candidate = path.resolve(String(session.workspaceDir || ''))
+    if (candidate !== target) continue
+    if (session.child && !session.child.killed) {
+      return true
+    }
+  }
+
+  return false
+}
+
+const cleanupWorkspaceDirIfUnused = (workspaceDir, excludeSessionKey = '') => {
+  if (!TERMINAL_WORKSPACE_EPHEMERAL) return
+  if (!workspaceDir) return
+  if (hasActiveTerminalUsingWorkspace(workspaceDir, excludeSessionKey)) return
+
+  try {
+    if (fs.existsSync(workspaceDir)) {
+      fs.rmSync(workspaceDir, { recursive: true, force: true })
+    }
+  } catch (cleanupError) {
+    void cleanupError
+  }
 }
 
 const isPathInsideWorkspace = (workspaceDir, candidatePath) => {
@@ -5256,9 +5288,18 @@ const clearProjectInvites = (projectId) => {
 
 const stopProjectTerminals = async (projectId) => {
   const sessions = Array.from(terminalSessions.entries()).filter(([, session]) => session.projectId === projectId)
+  const workspaceDirs = new Set()
+
   for (const [key, session] of sessions) {
     await stopTerminalProcess(session).catch(() => false)
+    if (session?.workspaceDir) {
+      workspaceDirs.add(path.resolve(String(session.workspaceDir || '')))
+    }
     terminalSessions.delete(key)
+  }
+
+  for (const workspaceDir of workspaceDirs) {
+    cleanupWorkspaceDirIfUnused(workspaceDir)
   }
 }
 
@@ -7872,6 +7913,8 @@ io.on('connection', (socket) => {
         code,
         signal,
       })
+
+      cleanupWorkspaceDirIfUnused(session.workspaceDir, sessionKey)
 
       broadcastProjectSnapshot(projectId, project).catch(() => {})
     })

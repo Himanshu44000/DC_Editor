@@ -24,3 +24,7 @@ dist-ssr
 *.sw?
 
 .env
+
+# Local terminal/workspace scratch dirs (generated at runtime)
+.tw/
+.terminal-workspaces/
