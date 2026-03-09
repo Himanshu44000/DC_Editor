@@ -47,6 +47,230 @@ const formatConversationTime = (value) => {
   return date.toLocaleString()
 }
 
+const renderInlineMarkdown = (text = '', keyPrefix = 'inline') => {
+  const source = String(text || '')
+  if (!source) return ''
+
+  const pattern = /(\*\*[^*\n][\s\S]*?\*\*|__[^_\n][\s\S]*?__|~~[^~\n][\s\S]*?~~|`[^`\n]+`|\*[^*\n][\s\S]*?\*)/g
+  const parts = []
+  let lastIndex = 0
+  let match = pattern.exec(source)
+  let segmentIndex = 0
+
+  while (match) {
+    if (match.index > lastIndex) {
+      parts.push(source.slice(lastIndex, match.index))
+    }
+
+    const token = String(match[0] || '')
+    const tokenKey = `${keyPrefix}-${segmentIndex}`
+
+    if (token.startsWith('**') && token.endsWith('**')) {
+      parts.push(<strong key={tokenKey}>{token.slice(2, -2)}</strong>)
+    } else if (token.startsWith('__') && token.endsWith('__')) {
+      parts.push(<strong key={tokenKey}>{token.slice(2, -2)}</strong>)
+    } else if (token.startsWith('~~') && token.endsWith('~~')) {
+      parts.push(<del key={tokenKey}>{token.slice(2, -2)}</del>)
+    } else if (token.startsWith('`') && token.endsWith('`')) {
+      parts.push(<code key={tokenKey}>{token.slice(1, -1)}</code>)
+    } else if (token.startsWith('*') && token.endsWith('*')) {
+      parts.push(<em key={tokenKey}>{token.slice(1, -1)}</em>)
+    } else {
+      parts.push(token)
+    }
+
+    segmentIndex += 1
+    lastIndex = match.index + token.length
+    match = pattern.exec(source)
+  }
+
+  if (lastIndex < source.length) {
+    parts.push(source.slice(lastIndex))
+  }
+
+  return parts
+}
+
+const normalizeTableRow = (line = '') =>
+  String(line || '')
+    .trim()
+    .replace(/^\|/, '')
+    .replace(/\|$/, '')
+    .split('|')
+    .map((cell) => cell.trim())
+
+const renderMarkdownContent = (content = '') => {
+  const text = String(content || '').replace(/\r\n/g, '\n')
+  if (!text.trim()) return null
+
+  const lines = text.split('\n')
+  const blocks = []
+  let lineIndex = 0
+  let blockKey = 0
+
+  while (lineIndex < lines.length) {
+    const line = lines[lineIndex]
+    const trimmed = String(line || '').trim()
+
+    if (!trimmed) {
+      lineIndex += 1
+      continue
+    }
+
+    if (trimmed.startsWith('```')) {
+      const language = trimmed.replace(/^```/, '').trim()
+      lineIndex += 1
+      const codeLines = []
+
+      while (lineIndex < lines.length && !String(lines[lineIndex] || '').trim().startsWith('```')) {
+        codeLines.push(lines[lineIndex])
+        lineIndex += 1
+      }
+
+      if (lineIndex < lines.length) {
+        lineIndex += 1
+      }
+
+      blocks.push(
+        <pre className="ai-md-pre" key={`md-${blockKey}`}>
+          <code data-lang={language || undefined}>{codeLines.join('\n')}</code>
+        </pre>,
+      )
+      blockKey += 1
+      continue
+    }
+
+    const headingMatch = trimmed.match(/^(#{1,6})\s+(.+)$/)
+    if (headingMatch) {
+      const level = Math.min(6, headingMatch[1].length)
+      const headingText = headingMatch[2]
+      const key = `md-${blockKey}`
+
+      if (level === 1) {
+        blocks.push(<h1 key={key}>{renderInlineMarkdown(headingText, `${key}-h1`)}</h1>)
+      } else if (level === 2) {
+        blocks.push(<h2 key={key}>{renderInlineMarkdown(headingText, `${key}-h2`)}</h2>)
+      } else if (level === 3) {
+        blocks.push(<h3 key={key}>{renderInlineMarkdown(headingText, `${key}-h3`)}</h3>)
+      } else if (level === 4) {
+        blocks.push(<h4 key={key}>{renderInlineMarkdown(headingText, `${key}-h4`)}</h4>)
+      } else if (level === 5) {
+        blocks.push(<h5 key={key}>{renderInlineMarkdown(headingText, `${key}-h5`)}</h5>)
+      } else {
+        blocks.push(<h6 key={key}>{renderInlineMarkdown(headingText, `${key}-h6`)}</h6>)
+      }
+
+      blockKey += 1
+      lineIndex += 1
+      continue
+    }
+
+    const looksLikeTableHeader = line.includes('|')
+    const nextLine = lines[lineIndex + 1] || ''
+    const looksLikeTableDivider = /^\s*\|?\s*[:\-]+(?:\s*\|\s*[:\-]+)+\s*\|?\s*$/.test(nextLine)
+
+    if (looksLikeTableHeader && looksLikeTableDivider) {
+      const headerCells = normalizeTableRow(line)
+      lineIndex += 2
+      const bodyRows = []
+
+      while (lineIndex < lines.length) {
+        const rowLine = String(lines[lineIndex] || '')
+        if (!rowLine.includes('|') || !rowLine.trim()) break
+        bodyRows.push(normalizeTableRow(rowLine))
+        lineIndex += 1
+      }
+
+      const columnCount = headerCells.length
+      blocks.push(
+        <div className="ai-md-table-wrap" key={`md-${blockKey}`}>
+          <table className="ai-md-table">
+            <thead>
+              <tr>
+                {headerCells.map((cell, idx) => (
+                  <th key={`md-${blockKey}-h-${idx}`}>{renderInlineMarkdown(cell, `md-${blockKey}-h-${idx}`)}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {bodyRows.map((row, rowIdx) => (
+                <tr key={`md-${blockKey}-r-${rowIdx}`}>
+                  {Array.from({ length: columnCount }).map((_, colIdx) => (
+                    <td key={`md-${blockKey}-c-${rowIdx}-${colIdx}`}>
+                      {renderInlineMarkdown(row[colIdx] || '', `md-${blockKey}-c-${rowIdx}-${colIdx}`)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>,
+      )
+      blockKey += 1
+      continue
+    }
+
+    const listItemMatch = trimmed.match(/^([-*+]|\d+\.)\s+(.+)$/)
+    if (listItemMatch) {
+      const isOrdered = /\d+\./.test(listItemMatch[1])
+      const items = []
+
+      while (lineIndex < lines.length) {
+        const candidate = String(lines[lineIndex] || '').trim()
+        const candidateMatch = candidate.match(/^([-*+]|\d+\.)\s+(.+)$/)
+        if (!candidateMatch) break
+
+        const candidateOrdered = /\d+\./.test(candidateMatch[1])
+        if (candidateOrdered !== isOrdered) break
+
+        items.push(candidateMatch[2])
+        lineIndex += 1
+      }
+
+      const listChildren = items.map((item, itemIndex) => (
+        <li key={`md-${blockKey}-li-${itemIndex}`}>{renderInlineMarkdown(item, `md-${blockKey}-li-${itemIndex}`)}</li>
+      ))
+
+      blocks.push(
+        isOrdered ? <ol key={`md-${blockKey}`}>{listChildren}</ol> : <ul key={`md-${blockKey}`}>{listChildren}</ul>,
+      )
+      blockKey += 1
+      continue
+    }
+
+    const paragraphLines = [line]
+    lineIndex += 1
+
+    while (lineIndex < lines.length) {
+      const next = String(lines[lineIndex] || '')
+      const nextTrimmed = next.trim()
+      const startsSpecial =
+        !nextTrimmed ||
+        nextTrimmed.startsWith('```') ||
+        /^(#{1,6})\s+/.test(nextTrimmed) ||
+        /^([-*+]|\d+\.)\s+/.test(nextTrimmed)
+
+      if (startsSpecial) break
+      paragraphLines.push(next)
+      lineIndex += 1
+    }
+
+    blocks.push(
+      <p key={`md-${blockKey}`}>
+        {paragraphLines.map((paraLine, paraIndex) => (
+          <span key={`md-${blockKey}-line-${paraIndex}`}>
+            {paraIndex > 0 ? <br /> : null}
+            {renderInlineMarkdown(paraLine, `md-${blockKey}-line-${paraIndex}`)}
+          </span>
+        ))}
+      </p>,
+    )
+    blockKey += 1
+  }
+
+  return blocks
+}
+
 const AIAssistantPanel = ({
   isOpen,
   canUseAI,
@@ -65,6 +289,7 @@ const AIAssistantPanel = ({
   const [isLoadingMessages, setIsLoadingMessages] = useState(false)
   const [isSending, setIsSending] = useState(false)
   const [responsePhase, setResponsePhase] = useState('idle')
+  const [aiUsage, setAiUsage] = useState(null)
   const [error, setError] = useState('')
   const [panelWidth, setPanelWidth] = useState(AI_PANEL_DEFAULT_WIDTH)
   const attachmentInputRef = useRef(null)
@@ -175,6 +400,38 @@ const AIAssistantPanel = ({
     }
 
     loadConversations()
+
+    return () => {
+      cancelled = true
+    }
+  }, [isOpen, canUseAI, projectId, getAuthToken])
+
+  useEffect(() => {
+    if (!isOpen || !canUseAI || !projectId) {
+      setAiUsage(null)
+      return
+    }
+
+    let cancelled = false
+
+    const loadUsage = async () => {
+      try {
+        const data = await apiRequest(`/projects/${projectId}/ai/usage`, {}, getAuthToken)
+        if (cancelled) return
+        setAiUsage({
+          promptLimit: Number(data?.promptLimit || 0),
+          promptCount: Number(data?.promptCount || 0),
+          remainingPrompts: Number(data?.remainingPrompts || 0),
+          promptLimitReached: Boolean(data?.promptLimitReached),
+        })
+      } catch {
+        if (!cancelled) {
+          setAiUsage(null)
+        }
+      }
+    }
+
+    loadUsage()
 
     return () => {
       cancelled = true
@@ -304,7 +561,7 @@ const AIAssistantPanel = ({
     event.preventDefault()
 
     const messageText = String(draft || '').trim()
-    if (!messageText || !projectId || isSending) return
+    if (!messageText || !projectId || isSending || aiUsage?.promptLimitReached) return
 
     let targetConversationId = activeConversationId
     if (!targetConversationId) {
@@ -460,6 +717,17 @@ const AIAssistantPanel = ({
               completedSuccessfully = true
               setIsSending(false)
               setResponsePhase('idle')
+              setAiUsage((prev) => {
+                if (!prev || prev.promptLimitReached) return prev
+                const nextCount = prev.promptCount + 1
+                const nextRemaining = Math.max(0, prev.promptLimit - nextCount)
+                return {
+                  ...prev,
+                  promptCount: nextCount,
+                  remainingPrompts: nextRemaining,
+                  promptLimitReached: nextCount >= prev.promptLimit,
+                }
+              })
             }
 
             if (payload.type === 'error') {
@@ -483,7 +751,27 @@ const AIAssistantPanel = ({
       })
     } catch (sendError) {
       setMessages((prev) => prev.filter((entry) => entry.id !== assistantLocalId))
-      setError(sendError.message || 'Failed to send AI message')
+      const sendErrorMessage = sendError.message || 'Failed to send AI message'
+      setError(sendErrorMessage)
+      if (/cannot use ai chat in this project for more than/i.test(sendErrorMessage)) {
+        setAiUsage((prev) => {
+          const promptLimit = Number(prev?.promptLimit || 0)
+          if (!promptLimit) {
+            return {
+              promptLimit: 0,
+              promptCount: 0,
+              remainingPrompts: 0,
+              promptLimitReached: true,
+            }
+          }
+          return {
+            ...prev,
+            promptCount: promptLimit,
+            remainingPrompts: 0,
+            promptLimitReached: true,
+          }
+        })
+      }
       setIsSending(false)
       setResponsePhase('idle')
     } finally {
@@ -495,6 +783,12 @@ const AIAssistantPanel = ({
   }
 
   if (!isOpen) return null
+
+  const isPromptLimitReached = Boolean(aiUsage?.promptLimitReached)
+  const isComposerDisabled = !canUseAI || isSending || isPromptLimitReached
+  const composerPlaceholder = isPromptLimitReached
+    ? `Prompt limit reached for this project (${aiUsage?.promptLimit || 0}).`
+    : 'Describe what to build next'
 
   const renderComposer = () => (
     <form className="ai-assistant-form" onSubmit={handleSend}>
@@ -509,7 +803,7 @@ const AIAssistantPanel = ({
       )}
 
       <div className="ai-compose-row">
-        <button type="button" onClick={handleAttachmentClick} disabled={isSending || !canUseAI}>
+        <button type="button" onClick={handleAttachmentClick} disabled={isComposerDisabled}>
           +
         </button>
 
@@ -526,15 +820,21 @@ const AIAssistantPanel = ({
           ref={composeTextareaRef}
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
-          placeholder="Describe what to build next"
+          placeholder={composerPlaceholder}
           rows={1}
-          disabled={!canUseAI || isSending}
+          disabled={isComposerDisabled}
         />
 
-        <button type="submit" disabled={!canUseAI || isSending || !draft.trim()}>
+        <button type="submit" disabled={isComposerDisabled || !draft.trim()}>
           {isSending ? 'Running' : 'Send'}
         </button>
       </div>
+
+      {aiUsage && (
+        <small className="ai-usage-hint">
+          Prompts used: {aiUsage.promptCount}/{aiUsage.promptLimit}
+        </small>
+      )}
     </form>
   )
 
@@ -630,7 +930,13 @@ const AIAssistantPanel = ({
             {messages.map((message) => (
               <div key={message.id} className={`ai-message-item ${message.role === 'user' ? 'self' : 'assistant'}`}>
                 <strong>{message.role === 'user' ? 'You' : 'AI'}</strong>
-                <p>{message.content || (isSending && message.role === 'assistant' ? 'Thinking...' : '')}</p>
+                {message.role === 'assistant' ? (
+                  <div className="ai-markdown-body">
+                    {renderMarkdownContent(message.content || (isSending ? 'Thinking...' : ''))}
+                  </div>
+                ) : (
+                  <p>{message.content || ''}</p>
+                )}
                 {Array.isArray(message.attachments) && message.attachments.length > 0 && (
                   <div className="ai-message-attachments">
                     {message.attachments.map((attachment, index) => (

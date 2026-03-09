@@ -1188,6 +1188,112 @@ body.ai-panel-resizing {
   word-break: break-word;
 }
 
+.ai-markdown-body {
+  margin: 0.2rem 0;
+  display: grid;
+  gap: 0.45rem;
+  word-break: break-word;
+}
+
+.ai-markdown-body p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.ai-markdown-body h1,
+.ai-markdown-body h2,
+.ai-markdown-body h3,
+.ai-markdown-body h4,
+.ai-markdown-body h5,
+.ai-markdown-body h6 {
+  margin: 0;
+  line-height: 1.25;
+}
+
+.ai-markdown-body h1 {
+  font-size: 1.02rem;
+}
+
+.ai-markdown-body h2 {
+  font-size: 0.98rem;
+}
+
+.ai-markdown-body h3,
+.ai-markdown-body h4,
+.ai-markdown-body h5,
+.ai-markdown-body h6 {
+  font-size: 0.92rem;
+}
+
+.ai-markdown-body ul,
+.ai-markdown-body ol {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.ai-markdown-body code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-size: 0.8rem;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  padding: 0.04rem 0.3rem;
+}
+
+.ai-md-pre {
+  margin: 0;
+  border: 1px solid #334155;
+  border-radius: 9px;
+  padding: 0.5rem;
+  overflow: auto;
+  background: #020617;
+}
+
+.ai-md-pre code {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  line-height: 1.45;
+  display: block;
+}
+
+.ai-md-table-wrap {
+  overflow: auto;
+  border: 1px solid #334155;
+  border-radius: 9px;
+}
+
+.ai-md-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 320px;
+}
+
+.ai-md-table th,
+.ai-md-table td {
+  border-bottom: 1px solid #1f2937;
+  border-right: 1px solid #1f2937;
+  padding: 0.35rem 0.45rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.ai-md-table th:last-child,
+.ai-md-table td:last-child {
+  border-right: 0;
+}
+
+.ai-md-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.ai-md-table th {
+  background: #0f172a;
+  color: #dbeafe;
+}
+
 .ai-message-item small {
   color: #94a3b8;
 }
@@ -1209,6 +1315,11 @@ body.ai-panel-resizing {
 .ai-assistant-form {
   display: grid;
   gap: 0.35rem;
+}
+
+.ai-usage-hint {
+  color: #94a3b8;
+  font-size: 0.74rem;
 }
 
 .ai-assistant-form textarea {

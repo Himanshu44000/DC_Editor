@@ -73,6 +73,7 @@ const FRONTEND_BASE_URL = String(process.env.FRONTEND_BASE_URL || 'http://localh
 const GITHUB_DEFAULT_COMMIT_MESSAGE = 'Initial upload from DC Editor'
 const GEMINI_API_KEY = String(process.env.GEMINI_API_KEY || '').trim()
 const GEMINI_MODEL = String(process.env.GEMINI_MODEL || 'gemini-1.5-flash').trim()
+const GEMINI_DEFAULT_FALLBACK_MODELS = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemma-3-4b-it']
 const GEMINI_FALLBACK_MODELS = String(process.env.GEMINI_FALLBACK_MODELS || '')
   .split(',')
   .map((entry) => String(entry || '').trim())
@@ -92,6 +93,8 @@ const AI_GHOST_MAX_CONTEXT_WINDOW_CHARS = Math.max(500, Number(process.env.AI_GH
 const AI_GHOST_MAX_PROJECT_SUMMARY_CHARS = Math.max(200, Number(process.env.AI_GHOST_MAX_PROJECT_SUMMARY_CHARS || 2000))
 const AI_GHOST_MAX_OUTPUT_TOKENS = Math.max(24, Number(process.env.AI_GHOST_MAX_OUTPUT_TOKENS || 120))
 const AI_GHOST_TEMPERATURE = Number(process.env.AI_GHOST_TEMPERATURE || 0.05)
+const GEMINI_RATE_LIMIT_MAX_RETRIES = Math.max(0, Number(process.env.GEMINI_RATE_LIMIT_MAX_RETRIES || 2))
+const GEMINI_RATE_LIMIT_MAX_WAIT_MS = Math.max(500, Number(process.env.GEMINI_RATE_LIMIT_MAX_WAIT_MS || 12000))
 const AI_SYSTEM_INSTRUCTION = [
   'You are an AI coding assistant inside a collaborative web IDE.',
   'Prioritize practical, accurate, and secure guidance.',
@@ -150,6 +153,7 @@ const githubOauthStates = new Map()
 const aiConversations = new Map()
 const aiMessagesByConversation = new Map()
 const aiGhostUsageByUserProject = new Map()
+const aiGhostGeminiCooldownUntilByUserProject = new Map()
 const projects = new Map()
 const invitations = new Map()
 const terminalSessions = new Map()
@@ -4612,14 +4616,58 @@ const extractGeminiText = (payload) => {
   return parts.join('').trim()
 }
 
+const delay = (ms = 0) => new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)))
+
+const extractGeminiRetryDelayMs = (message = '') => {
+  const normalized = String(message || '').trim()
+  if (!normalized) return null
+
+  const retryInSeconds = normalized.match(/retry\s+in\s+([\d.]+)s/i)
+  if (retryInSeconds?.[1]) {
+    const seconds = Number(retryInSeconds[1])
+    if (Number.isFinite(seconds) && seconds > 0) {
+      return Math.round(seconds * 1000)
+    }
+  }
+
+  const retryAfter = normalized.match(/retry(?:\s+after)?\s+([\d.]+)\s*(ms|millisecond|milliseconds|s|sec|secs|second|seconds|m|min|mins|minute|minutes)\b/i)
+  if (retryAfter?.[1] && retryAfter?.[2]) {
+    const amount = Number(retryAfter[1])
+    const unit = String(retryAfter[2]).toLowerCase()
+    if (!Number.isFinite(amount) || amount <= 0) return null
+
+    if (unit.startsWith('ms') || unit.startsWith('millisecond')) return Math.round(amount)
+    if (unit.startsWith('m') && !unit.startsWith('ms')) return Math.round(amount * 60 * 1000)
+    return Math.round(amount * 1000)
+  }
+
+  return null
+}
+
+const isGeminiHardQuotaMessage = (message = '') => {
+  const normalized = String(message || '').toLowerCase()
+  if (!normalized) return false
+  return /quota exceeded|insufficient quota|exceeded your current quota|billing account/i.test(normalized)
+}
+
+const isGeminiRateLimitMessage = (message = '') => {
+  const normalized = String(message || '').toLowerCase()
+  if (!normalized) return false
+  return /rate limit|too many requests|resource has been exhausted|retry in|429/i.test(normalized)
+}
+
 const normalizeGeminiErrorMessage = (message = '') => {
   const normalized = String(message || '').trim()
   if (!normalized) return 'Gemini request failed.'
 
   const quotaMatch = normalized.match(/retry\s+in\s+([\d.]+)s/i)
-  if (/quota exceeded|rate limit|too many requests/i.test(normalized)) {
+  if (isGeminiHardQuotaMessage(normalized)) {
+    return 'Gemini quota exceeded for this API key.'
+  }
+
+  if (isGeminiRateLimitMessage(normalized)) {
     const retryText = quotaMatch?.[1] ? ` Please retry in about ${quotaMatch[1]}s.` : ''
-    return `Gemini quota exceeded for this API key.${retryText}`
+    return `Gemini is temporarily rate-limited.${retryText}`
   }
 
   if (/is not found for api version|not supported for generatecontent/i.test(normalized)) {
@@ -4854,7 +4902,8 @@ const callGeminiGenerate = async (historyMessages, options = {}) => {
     },
   }
 
-  const modelCandidates = [GEMINI_MODEL, ...GEMINI_FALLBACK_MODELS].filter(Boolean)
+  const configuredFallbacks = [...GEMINI_FALLBACK_MODELS, ...GEMINI_DEFAULT_FALLBACK_MODELS]
+  const modelCandidates = [GEMINI_MODEL, ...configuredFallbacks].filter(Boolean)
   const triedModels = new Set()
   const orderedModels = modelCandidates.filter((model) => {
     if (triedModels.has(model)) return false
@@ -4866,43 +4915,75 @@ const callGeminiGenerate = async (historyMessages, options = {}) => {
 
   for (const modelName of orderedModels) {
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelName)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(requestBody),
-    })
 
-    const payload = await response.json().catch(() => ({}))
-    if (!response.ok) {
-      const rawMessage =
-        String(payload?.error?.message || payload?.message || '').trim() ||
-        `Gemini request failed (${response.status})`
-      const normalizedMessage = normalizeGeminiErrorMessage(rawMessage)
+    for (let attempt = 0; attempt <= GEMINI_RATE_LIMIT_MAX_RETRIES; attempt += 1) {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody),
+      })
 
-      const isNotFound = /unavailable for this api version|not found|not supported/i.test(normalizedMessage)
-      const isQuota = /quota exceeded|rate limit|too many requests/i.test(normalizedMessage)
+      const payload = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        const rawMessage =
+          String(payload?.error?.message || payload?.message || '').trim() ||
+          `Gemini request failed (${response.status})`
+        const normalizedMessage = normalizeGeminiErrorMessage(rawMessage)
+        const isNotFound = /unavailable for this api version|not found|not supported/i.test(normalizedMessage)
+        const isRateLimit = isGeminiRateLimitMessage(rawMessage) || /temporarily rate-limited/i.test(normalizedMessage)
+        const isHardQuota = isGeminiHardQuotaMessage(rawMessage) || /quota exceeded/i.test(normalizedMessage)
 
-      lastError = new Error(`${normalizedMessage} [model: ${modelName}]`)
+        lastError = new Error(`${normalizedMessage} [model: ${modelName}]`)
 
-      if ((isNotFound || isQuota) && modelName !== orderedModels[orderedModels.length - 1]) {
-        continue
+        if (isRateLimit && attempt < GEMINI_RATE_LIMIT_MAX_RETRIES) {
+          const retryDelayMs = extractGeminiRetryDelayMs(rawMessage)
+          const waitMs = Math.min(
+            GEMINI_RATE_LIMIT_MAX_WAIT_MS,
+            Math.max(500, Number.isFinite(retryDelayMs) ? retryDelayMs : 1500),
+          )
+          await delay(waitMs)
+          continue
+        }
+
+        if (isNotFound && modelName !== orderedModels[orderedModels.length - 1]) {
+          break
+        }
+
+        if (isHardQuota && modelName !== orderedModels[orderedModels.length - 1]) {
+          // Try a different Gemini model because quota pools can differ by model/tier.
+          break
+        }
+
+        throw lastError
       }
 
-      throw lastError
-    }
+      const text = extractGeminiText(payload)
+      if (!text) {
+        lastError = new Error(`Gemini returned an empty response [model: ${modelName}]`)
+        break
+      }
 
-    const text = extractGeminiText(payload)
-    if (!text) {
-      lastError = new Error(`Gemini returned an empty response [model: ${modelName}]`)
-      continue
+      return text
     }
-
-    return text
   }
 
   throw lastError || new Error('Gemini request failed for all configured models.')
+}
+
+const getAiGhostGeminiCooldownKey = (projectId = '', userId = '') => `${String(projectId || '').trim()}::${String(userId || '').trim()}`
+
+const isAiGhostGeminiCoolingDown = (projectId = '', userId = '') => {
+  const key = getAiGhostGeminiCooldownKey(projectId, userId)
+  const until = Number(aiGhostGeminiCooldownUntilByUserProject.get(key) || 0)
+  return until > Date.now()
+}
+
+const setAiGhostGeminiCooldown = (projectId = '', userId = '', ms = 10000) => {
+  const key = getAiGhostGeminiCooldownKey(projectId, userId)
+  const duration = Math.max(1000, Number(ms) || 10000)
+  aiGhostGeminiCooldownUntilByUserProject.set(key, Date.now() + duration)
 }
 
 const buildGhostSuggestionPrompt = ({
@@ -6135,6 +6216,29 @@ app.post('/api/projects/:projectId/ai/conversations', authMiddleware, async (req
   }
 })
 
+app.get('/api/projects/:projectId/ai/usage', authMiddleware, async (req, res) => {
+  const { projectId } = req.params
+  const { error } = assertAiProjectAccess(projectId, req.userId)
+  if (error) {
+    return res.status(error.status).json({ message: error.message })
+  }
+
+  try {
+    const promptCount = await countAiUserPromptsForProject(projectId, req.userId)
+    const promptLimit = AI_CHAT_PROJECT_PROMPT_LIMIT
+    const remainingPrompts = Math.max(0, promptLimit - promptCount)
+
+    return res.json({
+      promptLimit,
+      promptCount,
+      remainingPrompts,
+      promptLimitReached: promptCount >= promptLimit,
+    })
+  } catch (usageError) {
+    return res.status(500).json({ message: `Failed to load AI usage: ${usageError.message}` })
+  }
+})
+
 app.post('/api/projects/:projectId/ai/ghost-suggestion', authMiddleware, async (req, res) => {
   const { projectId } = req.params
   const { project, error } = assertAiProjectAccess(projectId, req.userId)
@@ -6165,6 +6269,22 @@ app.post('/api/projects/:projectId/ai/ghost-suggestion', authMiddleware, async (
 
   if (!fileContent.trim() && !contextBefore.trim() && !contextAfter.trim()) {
     return res.json({ suggestionText: '' })
+  }
+
+  if (isAiGhostGeminiCoolingDown(projectId, req.userId)) {
+    const heuristicSuggestion = sanitizeGhostSuggestionOutput(
+      buildGhostHeuristicSuggestion({
+        language,
+        linePrefix,
+        lineSuffix,
+        fileContent,
+      }),
+      {
+        linePrefix,
+        lineSuffix,
+      },
+    )
+    return res.json({ suggestionText: heuristicSuggestion })
   }
 
   try {
@@ -6216,7 +6336,30 @@ app.post('/api/projects/:projectId/ai/ghost-suggestion', authMiddleware, async (
 
     return res.json({ suggestionText: heuristicSuggestion })
   } catch (ghostError) {
-    return res.status(500).json({ message: ghostError.message || 'Failed to generate ghost suggestion.' })
+    const heuristicSuggestion = sanitizeGhostSuggestionOutput(
+      buildGhostHeuristicSuggestion({
+        language,
+        linePrefix,
+        lineSuffix,
+        fileContent,
+      }),
+      {
+        linePrefix,
+        lineSuffix,
+      },
+    )
+
+    const rawMessage = String(ghostError?.message || '')
+    if (isGeminiRateLimitMessage(rawMessage)) {
+      const cooldownMs = Math.min(
+        GEMINI_RATE_LIMIT_MAX_WAIT_MS,
+        Math.max(3000, Number(extractGeminiRetryDelayMs(rawMessage) || 8000)),
+      )
+      setAiGhostGeminiCooldown(projectId, req.userId, cooldownMs)
+      return res.json({ suggestionText: heuristicSuggestion })
+    }
+
+    return res.status(500).json({ message: normalizeGeminiErrorMessage(rawMessage) || 'Failed to generate ghost suggestion.' })
   }
 })
 
