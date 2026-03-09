@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 import AuthPage from './pages/AuthPage'
 import DashboardPage from './pages/DashboardPage'
+import LandingPage from './pages/LandingPage'
 import ProjectPage from './pages/ProjectPage'
 import ProfilePage from './pages/ProfilePage'
 import LandingPage from './pages/LandingPage'
@@ -25,7 +26,7 @@ function App() {
         <Route path="/project/:projectId" element={<ProjectPage />} />
       </Route>
 
-      <Route path="*" element={<Navigate to="/dashboard" replace />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )
 }

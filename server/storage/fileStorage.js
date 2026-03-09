@@ -21,6 +21,12 @@ function isCloudinaryNotFoundError(error) {
   return httpCode === 404 || message.includes('not found') || message.includes('does not exist');
 }
 
+function isCloudinaryAuthMismatchError(error) {
+  const message = getCloudinaryErrorMessage(error).toLowerCase();
+  const httpCode = Number(error?.http_code || error?.error?.http_code || 0);
+  return httpCode === 401 || message.includes('api_secret mismatch') || message.includes('invalid signature');
+}
+
 /**
  * Storage abstraction for project files
  * Uploads file content to Cloudinary as raw text files
@@ -209,6 +215,11 @@ export async function deleteProjectFolder(projectId) {
     // Also try to delete the folder (will only work if empty or if all resources deleted)
     await cloudinary.api.delete_folder(`projects/${projectId}`);
   } catch (error) {
+    if (isCloudinaryAuthMismatchError(error)) {
+      // Non-fatal for app behavior; skip noisy cleanup warning.
+      return;
+    }
+
     if (!isCloudinaryNotFoundError(error)) {
       console.warn(
         `Warning: Could not fully delete project folder ${projectId}: ${getCloudinaryErrorMessage(error)}`

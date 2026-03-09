@@ -71,6 +71,41 @@ const GITHUB_CLIENT_SECRET = String(process.env.GITHUB_CLIENT_SECRET || '').trim
 const GITHUB_OAUTH_CALLBACK_URL = String(process.env.GITHUB_OAUTH_CALLBACK_URL || 'http://localhost:4000/api/github/oauth/callback').trim()
 const FRONTEND_BASE_URL = String(process.env.FRONTEND_BASE_URL || 'http://localhost:5173').trim()
 const GITHUB_DEFAULT_COMMIT_MESSAGE = 'Initial upload from DC Editor'
+const GEMINI_API_KEY = String(process.env.GEMINI_API_KEY || '').trim()
+const GEMINI_MODEL = String(process.env.GEMINI_MODEL || 'gemini-1.5-flash').trim()
+const GEMINI_FALLBACK_MODELS = String(process.env.GEMINI_FALLBACK_MODELS || '')
+  .split(',')
+  .map((entry) => String(entry || '').trim())
+  .filter(Boolean)
+const AI_MAX_HISTORY_MESSAGES = 30
+const AI_MAX_ATTACHMENT_COUNT = 5
+const AI_MAX_ATTACHMENT_TEXT_CHARS = 12000
+const AI_MAX_SELECTED_FILE_CHARS = 18000
+const AI_MAX_PROJECT_CONTEXT_CHARS = 120000
+const AI_MAX_PROJECT_FILE_CHARS = 6000
+const AI_DEFAULT_CONVERSATION_TITLE = 'New conversation'
+const AI_CHAT_PROJECT_PROMPT_LIMIT = Math.max(1, Number(process.env.AI_CHAT_PROJECT_PROMPT_LIMIT || 10))
+const AI_GHOST_PER_MINUTE_LIMIT = Math.max(1, Number(process.env.AI_GHOST_PER_MINUTE_LIMIT || 20))
+const AI_GHOST_PER_PROJECT_LIMIT = Math.max(1, Number(process.env.AI_GHOST_PER_PROJECT_LIMIT || 50))
+const AI_GHOST_MAX_FILE_CHARS = Math.max(2000, Number(process.env.AI_GHOST_MAX_FILE_CHARS || 18000))
+const AI_GHOST_MAX_CONTEXT_WINDOW_CHARS = Math.max(500, Number(process.env.AI_GHOST_MAX_CONTEXT_WINDOW_CHARS || 7000))
+const AI_GHOST_MAX_PROJECT_SUMMARY_CHARS = Math.max(200, Number(process.env.AI_GHOST_MAX_PROJECT_SUMMARY_CHARS || 2000))
+const AI_GHOST_MAX_OUTPUT_TOKENS = Math.max(24, Number(process.env.AI_GHOST_MAX_OUTPUT_TOKENS || 120))
+const AI_GHOST_TEMPERATURE = Number(process.env.AI_GHOST_TEMPERATURE || 0.05)
+const AI_SYSTEM_INSTRUCTION = [
+  'You are an AI coding assistant inside a collaborative web IDE.',
+  'Prioritize practical, accurate, and secure guidance.',
+  'If code is requested, provide concise explanations and directly usable snippets.',
+  'When uncertain, say what assumption you are making.',
+].join(' ')
+
+const AI_GHOST_SYSTEM_INSTRUCTION = [
+  'You generate Monaco inline ghost completions for a code editor.',
+  'Return only the code continuation text to insert at cursor. No JSON, no markdown, no explanation.',
+  'The output must continue from current cursor position and must not repeat the existing prefix before cursor.',
+  'Prefer concise, accurate continuation that matches surrounding file style and syntax.',
+  'If uncertain, return an empty string.',
+].join(' ')
 
 const toLiveKitApiUrl = (value = '') => {
   const normalized = String(value || '').trim()
@@ -112,6 +147,9 @@ if (CLERK_SECRET_KEY) {
 const users = new Map()
 const usersByEmail = new Map()
 const githubOauthStates = new Map()
+const aiConversations = new Map()
+const aiMessagesByConversation = new Map()
+const aiGhostUsageByUserProject = new Map()
 const projects = new Map()
 const invitations = new Map()
 const terminalSessions = new Map()
@@ -3825,6 +3863,34 @@ const initDb = async () => {
   await dbClient.query('ALTER TABLE collab_users ADD COLUMN IF NOT EXISTS github_access_token TEXT')
   await dbClient.query('ALTER TABLE collab_users ADD COLUMN IF NOT EXISTS github_token_scope TEXT')
   await dbClient.query('ALTER TABLE collab_users ADD COLUMN IF NOT EXISTS github_connected_at TIMESTAMPTZ')
+  await dbClient.query(
+    `CREATE TABLE IF NOT EXISTS collab_ai_conversations (
+       id TEXT PRIMARY KEY,
+       project_id TEXT NOT NULL REFERENCES collab_projects(id) ON DELETE CASCADE,
+       user_id TEXT NOT NULL REFERENCES collab_users(id) ON DELETE CASCADE,
+       title TEXT NOT NULL,
+       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+     )`,
+  )
+  await dbClient.query(
+    `CREATE TABLE IF NOT EXISTS collab_ai_messages (
+       id TEXT PRIMARY KEY,
+       conversation_id TEXT NOT NULL REFERENCES collab_ai_conversations(id) ON DELETE CASCADE,
+       project_id TEXT NOT NULL REFERENCES collab_projects(id) ON DELETE CASCADE,
+       user_id TEXT REFERENCES collab_users(id) ON DELETE SET NULL,
+       role TEXT NOT NULL,
+       content TEXT NOT NULL,
+       attachments_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+     )`,
+  )
+  await dbClient.query(
+    'CREATE INDEX IF NOT EXISTS idx_collab_ai_conversations_project_user ON collab_ai_conversations(project_id, user_id, updated_at DESC)',
+  )
+  await dbClient.query(
+    'CREATE INDEX IF NOT EXISTS idx_collab_ai_messages_conversation_created ON collab_ai_messages(conversation_id, created_at ASC)',
+  )
 
   const usersResult = await dbClient.query(
     `SELECT id, email, name, avatar_url, bio, pronouns, company, location,
@@ -4094,6 +4160,807 @@ const getMemberRole = (project, userId) => {
 const canEditProject = (project, userId) => {
   const role = getMemberRole(project, userId)
   return role === 'owner' || role === 'collaborator'
+}
+
+const assertAiProjectAccess = (projectId, userId) => {
+  const { project, error } = assertProjectMembership(projectId, userId)
+  if (error) {
+    return { error }
+  }
+
+  if (!canEditProject(project, userId)) {
+    return { error: { status: 403, message: 'AI assistant is available only for owner and collaborators.' } }
+  }
+
+  return { project }
+}
+
+const normalizeAiTitle = (value = '') => {
+  const normalized = String(value || '').trim().replace(/\s+/g, ' ')
+  if (!normalized) return AI_DEFAULT_CONVERSATION_TITLE
+  return normalized.slice(0, 120)
+}
+
+const isDefaultAiConversationTitle = (value = '') => {
+  const normalized = String(value || '').trim().replace(/\s+/g, ' ').toLowerCase()
+  if (!normalized) return true
+  return normalized === String(AI_DEFAULT_CONVERSATION_TITLE).trim().toLowerCase()
+}
+
+const deriveAiConversationTitleFromMessage = (messageText = '') => {
+  const normalized = String(messageText || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!normalized) return AI_DEFAULT_CONVERSATION_TITLE
+
+  const sanitized = normalized
+    .replace(/^[\s.,;:!?-]+/, '')
+    .replace(/[\r\n]+/g, ' ')
+    .trim()
+
+  if (!sanitized) return AI_DEFAULT_CONVERSATION_TITLE
+
+  const words = sanitized.split(' ').filter(Boolean).slice(0, 8)
+  const candidate = words.join(' ')
+  return normalizeAiTitle(candidate || sanitized)
+}
+
+const truncateAiText = (value = '', maxLength = 2000) => {
+  const normalized = sanitizeDbText(String(value || ''))
+  if (normalized.length <= maxLength) return normalized
+  return `${normalized.slice(0, Math.max(0, maxLength - 1))}...`
+}
+
+const normalizeAiAttachment = (attachment) => {
+  const name = String(attachment?.name || '').trim() || 'attachment.txt'
+  const content = truncateAiText(String(attachment?.content || ''), AI_MAX_ATTACHMENT_TEXT_CHARS)
+  if (!content) return null
+
+  return {
+    name: truncateAiText(name, 140),
+    content,
+  }
+}
+
+const ensureAiConfigured = () => {
+  if (!GEMINI_API_KEY) {
+    return {
+      error: {
+        status: 503,
+        message: 'AI assistant is not configured. Set GEMINI_API_KEY on the server.',
+      },
+    }
+  }
+  return { ok: true }
+}
+
+const toAiMessagePayload = (row) => ({
+  id: row.id,
+  conversationId: row.conversation_id,
+  projectId: row.project_id,
+  userId: row.user_id || null,
+  role: row.role,
+  content: row.content || '',
+  attachments: Array.isArray(row.attachments_json) ? row.attachments_json : [],
+  createdAt: row.created_at,
+})
+
+const toAiConversationPayload = (row) => ({
+  id: row.id,
+  projectId: row.project_id,
+  userId: row.user_id,
+  title: row.title,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+})
+
+const listAiConversations = async (projectId, userId) => {
+  if (!dbClient) {
+    return Array.from(aiConversations.values())
+      .filter((entry) => entry.projectId === projectId && entry.userId === userId)
+      .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
+  }
+
+  const result = await dbClient.query(
+    `SELECT id, project_id, user_id, title, created_at, updated_at
+     FROM collab_ai_conversations
+     WHERE project_id = $1 AND user_id = $2
+     ORDER BY updated_at DESC`,
+    [projectId, userId],
+  )
+
+  return result.rows.map(toAiConversationPayload)
+}
+
+const createAiConversation = async (projectId, userId, title = '') => {
+  const now = nowIso()
+  const conversation = {
+    id: randomUUID(),
+    projectId,
+    userId,
+    title: normalizeAiTitle(title),
+    createdAt: now,
+    updatedAt: now,
+  }
+
+  if (!dbClient) {
+    aiConversations.set(conversation.id, conversation)
+    aiMessagesByConversation.set(conversation.id, [])
+    return conversation
+  }
+
+  await dbClient.query(
+    `INSERT INTO collab_ai_conversations (id, project_id, user_id, title, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [conversation.id, conversation.projectId, conversation.userId, conversation.title, conversation.createdAt, conversation.updatedAt],
+  )
+
+  return conversation
+}
+
+const updateAiConversationTitle = async (conversationId, title) => {
+  const normalizedTitle = normalizeAiTitle(title)
+
+  if (!dbClient) {
+    const conversation = aiConversations.get(conversationId)
+    if (!conversation) return null
+    const updated = {
+      ...conversation,
+      title: normalizedTitle,
+      updatedAt: nowIso(),
+    }
+    aiConversations.set(conversationId, updated)
+    return updated
+  }
+
+  const result = await dbClient.query(
+    `UPDATE collab_ai_conversations
+     SET title = $2,
+         updated_at = NOW()
+     WHERE id = $1
+     RETURNING id, project_id, user_id, title, created_at, updated_at`,
+    [conversationId, normalizedTitle],
+  )
+
+  if (!result.rows.length) return null
+  return toAiConversationPayload(result.rows[0])
+}
+
+const getAiConversationForUser = async (conversationId, projectId, userId) => {
+  if (!dbClient) {
+    const conversation = aiConversations.get(conversationId)
+    if (!conversation || conversation.projectId !== projectId || conversation.userId !== userId) {
+      return null
+    }
+    return conversation
+  }
+
+  const result = await dbClient.query(
+    `SELECT id, project_id, user_id, title, created_at, updated_at
+     FROM collab_ai_conversations
+     WHERE id = $1 AND project_id = $2 AND user_id = $3
+     LIMIT 1`,
+    [conversationId, projectId, userId],
+  )
+
+  if (!result.rows.length) return null
+  return toAiConversationPayload(result.rows[0])
+}
+
+const listAiMessages = async (conversationId, limit = 200) => {
+  const normalizedLimit = Math.min(Math.max(Number(limit) || 200, 1), 500)
+
+  if (!dbClient) {
+    const items = Array.isArray(aiMessagesByConversation.get(conversationId))
+      ? aiMessagesByConversation.get(conversationId)
+      : []
+    return items.slice(-normalizedLimit)
+  }
+
+  const result = await dbClient.query(
+    `SELECT id, conversation_id, project_id, user_id, role, content, attachments_json, created_at
+     FROM collab_ai_messages
+     WHERE conversation_id = $1
+     ORDER BY created_at ASC
+     LIMIT $2`,
+    [conversationId, normalizedLimit],
+  )
+
+  return result.rows.map(toAiMessagePayload)
+}
+
+const countAiUserPromptsForProject = async (projectId, userId) => {
+  if (!projectId || !userId) return 0
+
+  if (!dbClient) {
+    let total = 0
+    for (const conversation of aiConversations.values()) {
+      if (conversation.projectId !== projectId || conversation.userId !== userId) continue
+      const messages = Array.isArray(aiMessagesByConversation.get(conversation.id))
+        ? aiMessagesByConversation.get(conversation.id)
+        : []
+      total += messages.filter((entry) => entry.role === 'user').length
+    }
+    return total
+  }
+
+  const result = await dbClient.query(
+    `SELECT COUNT(*)::int AS total
+     FROM collab_ai_messages m
+     INNER JOIN collab_ai_conversations c ON c.id = m.conversation_id
+     WHERE c.project_id = $1
+       AND c.user_id = $2
+       AND m.role = 'user'`,
+    [projectId, userId],
+  )
+
+  return Number(result.rows?.[0]?.total || 0)
+}
+
+const checkAndTrackAiGhostUsage = (projectId, userId) => {
+  const key = `${String(projectId || '').trim()}::${String(userId || '').trim()}`
+  const now = Date.now()
+
+  const existing = aiGhostUsageByUserProject.get(key) || {
+    perProjectCount: 0,
+    minuteWindowStartedAt: now,
+    minuteCount: 0,
+  }
+
+  if (now - Number(existing.minuteWindowStartedAt || 0) >= 60000) {
+    existing.minuteWindowStartedAt = now
+    existing.minuteCount = 0
+  }
+
+  if (existing.perProjectCount >= AI_GHOST_PER_PROJECT_LIMIT) {
+    return {
+      ok: false,
+      status: 429,
+      message: `Ghost suggestions cannot be used more than ${AI_GHOST_PER_PROJECT_LIMIT} times in this project.`,
+    }
+  }
+
+  if (existing.minuteCount >= AI_GHOST_PER_MINUTE_LIMIT) {
+    const elapsed = now - Number(existing.minuteWindowStartedAt || now)
+    const retryMs = Math.max(0, 60000 - elapsed)
+    return {
+      ok: false,
+      status: 429,
+      message: `Ghost suggestions are limited to ${AI_GHOST_PER_MINUTE_LIMIT} per minute. Try again in about ${Math.ceil(retryMs / 1000)}s.`,
+    }
+  }
+
+  existing.perProjectCount += 1
+  existing.minuteCount += 1
+  aiGhostUsageByUserProject.set(key, existing)
+
+  return { ok: true }
+}
+
+const appendAiMessage = async ({ conversationId, projectId, userId = null, role, content, attachments = [] }) => {
+  const message = {
+    id: randomUUID(),
+    conversationId,
+    projectId,
+    userId,
+    role: role === 'assistant' ? 'assistant' : 'user',
+    content: sanitizeDbText(String(content || '')),
+    attachments: Array.isArray(attachments) ? attachments : [],
+    createdAt: nowIso(),
+  }
+
+  if (!dbClient) {
+    const existing = Array.isArray(aiMessagesByConversation.get(conversationId))
+      ? aiMessagesByConversation.get(conversationId)
+      : []
+    existing.push(message)
+    aiMessagesByConversation.set(conversationId, existing)
+
+    const conversation = aiConversations.get(conversationId)
+    if (conversation) {
+      conversation.updatedAt = message.createdAt
+      aiConversations.set(conversationId, conversation)
+    }
+
+    return message
+  }
+
+  await dbClient.query(
+    `INSERT INTO collab_ai_messages (id, conversation_id, project_id, user_id, role, content, attachments_json, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)`,
+    [
+      message.id,
+      message.conversationId,
+      message.projectId,
+      message.userId,
+      message.role,
+      message.content,
+      JSON.stringify(message.attachments),
+      message.createdAt,
+    ],
+  )
+
+  await dbClient.query(
+    `UPDATE collab_ai_conversations
+     SET updated_at = $2
+     WHERE id = $1`,
+    [conversationId, message.createdAt],
+  )
+
+  return message
+}
+
+const clearAiConversationMessages = async (conversationId) => {
+  if (!dbClient) {
+    aiMessagesByConversation.set(conversationId, [])
+    const conversation = aiConversations.get(conversationId)
+    if (conversation) {
+      conversation.updatedAt = nowIso()
+      aiConversations.set(conversationId, conversation)
+    }
+    return
+  }
+
+  await dbClient.query('DELETE FROM collab_ai_messages WHERE conversation_id = $1', [conversationId])
+  await dbClient.query('UPDATE collab_ai_conversations SET updated_at = NOW() WHERE id = $1', [conversationId])
+}
+
+const deleteAiConversation = async (conversationId) => {
+  if (!dbClient) {
+    aiMessagesByConversation.delete(conversationId)
+    aiConversations.delete(conversationId)
+    return
+  }
+
+  await dbClient.query('DELETE FROM collab_ai_conversations WHERE id = $1', [conversationId])
+}
+
+const buildProjectContextBlock = async (project) => {
+  const sortedFiles = Array.from(project?.files?.values?.() || []).sort((a, b) =>
+    String(a?.path || a?.name || '').localeCompare(String(b?.path || b?.name || '')),
+  )
+
+  let remaining = AI_MAX_PROJECT_CONTEXT_CHARS
+  const fileSections = []
+
+  for (const file of sortedFiles) {
+    if (remaining <= 0) break
+    if (file?.isBinary) continue
+
+    const filePath = String(file?.path || file?.name || '').trim()
+    if (!filePath) continue
+
+    let content = ''
+    if (typeof file?.content === 'string' && file.content.length > 0) {
+      content = file.content
+    } else {
+      try {
+        content = String((await getFileContent(project.id, file.id)) || '')
+      } catch {
+        content = ''
+      }
+    }
+
+    const truncatedContent = truncateAiText(content, Math.min(remaining, AI_MAX_PROJECT_FILE_CHARS))
+    const section = [`File: ${filePath}`, '```', truncatedContent || '(empty file)', '```'].join('\n')
+
+    fileSections.push(section)
+    remaining -= section.length
+  }
+
+  return fileSections.join('\n\n')
+}
+
+const buildPromptWithContext = async ({ messageText, project, attachments }) => {
+  const sections = [sanitizeDbText(String(messageText || '').trim())]
+
+  if (project) {
+    const projectContext = await buildProjectContextBlock(project)
+    sections.push(
+      [
+        'Project context (all available text files in workspace snapshot):',
+        projectContext || '(no text files found)',
+      ].join('\n'),
+    )
+  }
+
+  for (const attachment of attachments || []) {
+    sections.push(
+      [
+        `Attachment: ${attachment.name}`,
+        '```',
+        truncateAiText(attachment.content, AI_MAX_ATTACHMENT_TEXT_CHARS),
+        '```',
+      ].join('\n'),
+    )
+  }
+
+  return sections.filter(Boolean).join('\n\n')
+}
+
+const toGeminiContentFromAiMessage = (message) => {
+  const role = message.role === 'assistant' ? 'model' : 'user'
+  const baseText = sanitizeDbText(String(message.content || ''))
+  const normalizedAttachments = (Array.isArray(message.attachments) ? message.attachments : [])
+    .map((entry) => normalizeAiAttachment(entry))
+    .filter(Boolean)
+  const attachmentText = normalizedAttachments
+    .map((entry) => `Attachment: ${entry.name}\n\n${entry.content}`)
+    .join('\n\n')
+  const mergedText = [baseText, attachmentText].filter(Boolean).join('\n\n')
+
+  return {
+    role,
+    parts: [{ text: mergedText || '(empty message)' }],
+  }
+}
+
+const extractGeminiText = (payload) => {
+  const candidates = Array.isArray(payload?.candidates) ? payload.candidates : []
+  const parts = []
+
+  for (const candidate of candidates) {
+    const candidateParts = Array.isArray(candidate?.content?.parts) ? candidate.content.parts : []
+    for (const part of candidateParts) {
+      const text = String(part?.text || '')
+      if (text) {
+        parts.push(text)
+      }
+    }
+  }
+
+  return parts.join('').trim()
+}
+
+const normalizeGeminiErrorMessage = (message = '') => {
+  const normalized = String(message || '').trim()
+  if (!normalized) return 'Gemini request failed.'
+
+  const quotaMatch = normalized.match(/retry\s+in\s+([\d.]+)s/i)
+  if (/quota exceeded|rate limit|too many requests/i.test(normalized)) {
+    const retryText = quotaMatch?.[1] ? ` Please retry in about ${quotaMatch[1]}s.` : ''
+    return `Gemini quota exceeded for this API key.${retryText}`
+  }
+
+  if (/is not found for api version|not supported for generatecontent/i.test(normalized)) {
+    return 'Configured Gemini model is unavailable for this API version.'
+  }
+
+  return normalized
+}
+
+const safeJsonParse = (value = '') => {
+  try {
+    return JSON.parse(String(value || ''))
+  } catch {
+    return null
+  }
+}
+
+const extractJsonObjectText = (value = '') => {
+  const text = String(value || '').trim()
+  if (!text) return ''
+
+  const fencedMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i)
+  if (fencedMatch?.[1]) {
+    return String(fencedMatch[1] || '').trim()
+  }
+
+  const firstBrace = text.indexOf('{')
+  const lastBrace = text.lastIndexOf('}')
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    return text.slice(firstBrace, lastBrace + 1).trim()
+  }
+
+  return text
+}
+
+const parseGhostSuggestionText = (raw = '', options = {}) => {
+  const linePrefix = String(options?.linePrefix || '')
+  const candidateJson = extractJsonObjectText(raw)
+  const parsed = safeJsonParse(candidateJson)
+  const jsonValue = String(parsed?.suggestionText || '').replace(/\r\n/g, '\n').trim()
+  if (jsonValue) {
+    const withoutPrefix = linePrefix && jsonValue.startsWith(linePrefix)
+      ? jsonValue.slice(linePrefix.length)
+      : jsonValue
+    return withoutPrefix.slice(0, 1200)
+  }
+
+  const cleaned = String(raw || '')
+    .replace(/```(?:json|typescript|javascript|tsx|jsx)?/gi, '')
+    .replace(/```/g, '')
+    .trim()
+
+  if (!cleaned) return ''
+
+  // Never leak format-instruction artifacts into ghost text.
+  if (/suggestionText/i.test(cleaned)) return ''
+  if (/^\s*\{[\s\S]*\}\s*$/.test(cleaned)) return ''
+  if (/^\s*[{[]/.test(cleaned) && /[:"]/.test(cleaned)) return ''
+
+  const stripped = cleaned.replace(/^['"]|['"]$/g, '').replace(/\r\n/g, '\n').trim()
+  if (!stripped) return ''
+
+  const withoutPrefix = linePrefix && stripped.startsWith(linePrefix)
+    ? stripped.slice(linePrefix.length)
+    : stripped
+
+  if (!withoutPrefix.trim()) return ''
+
+  return withoutPrefix.slice(0, 1200)
+}
+
+const GHOST_RELATED_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.json', '.css', '.scss', '.md']
+
+const parseGhostImportSpecifiers = (source = '') => {
+  const specs = new Set()
+  const text = String(source || '')
+  const regex = /from\s+['\"]([^'\"]+)['\"]|import\s*\(\s*['\"]([^'\"]+)['\"]\s*\)/g
+  for (const match of text.matchAll(regex)) {
+    const spec = String(match?.[1] || match?.[2] || '').trim()
+    if (spec) specs.add(spec)
+  }
+  return Array.from(specs)
+}
+
+const resolveGhostImportPathCandidates = (fromFilePath, specifier) => {
+  const normalizedFrom = normalizePath(fromFilePath || '')
+  const normalizedSpecifier = String(specifier || '').trim()
+  if (!normalizedFrom || !normalizedSpecifier) return []
+  if (!normalizedSpecifier.startsWith('.') && !normalizedSpecifier.startsWith('/')) return []
+
+  const fromDir = normalizedFrom.includes('/')
+    ? normalizedFrom.slice(0, normalizedFrom.lastIndexOf('/'))
+    : ''
+
+  const base = normalizedSpecifier.startsWith('/')
+    ? normalizePath(normalizedSpecifier.slice(1))
+    : normalizePath(path.posix.join(fromDir || '', normalizedSpecifier))
+
+  if (!base) return []
+
+  const candidates = new Set([base])
+  for (const ext of GHOST_RELATED_EXTENSIONS) {
+    candidates.add(`${base}${ext}`)
+    candidates.add(`${base}/index${ext}`)
+  }
+
+  return Array.from(candidates)
+}
+
+const buildGhostRelatedFilesContext = ({ project, filename, fileContent }) => {
+  const projectFiles = Array.from(project?.files?.values?.() || [])
+  if (!projectFiles.length) return ''
+
+  const pathMap = new Map(
+    projectFiles.map((entry) => [normalizePath(entry?.path || entry?.name || ''), entry]),
+  )
+
+  const currentPath = normalizePath(filename || '')
+  const importSpecifiers = parseGhostImportSpecifiers(fileContent)
+
+  const pickedPaths = new Set()
+  for (const specifier of importSpecifiers) {
+    const candidates = resolveGhostImportPathCandidates(currentPath, specifier)
+    for (const candidate of candidates) {
+      if (pathMap.has(candidate)) {
+        pickedPaths.add(candidate)
+        break
+      }
+    }
+    if (pickedPaths.size >= 6) break
+  }
+
+  if (!pickedPaths.size) return ''
+
+  const sections = []
+  let remaining = 14000
+  for (const relatedPath of pickedPaths) {
+    if (remaining <= 0) break
+    const entry = pathMap.get(relatedPath)
+    const raw = String(entry?.content || '')
+    if (!raw.trim()) continue
+
+    const snippet = truncateAiText(raw, Math.min(2800, remaining))
+    const section = [`File: ${relatedPath}`, '```', snippet, '```'].join('\n')
+    sections.push(section)
+    remaining -= section.length
+  }
+
+  return sections.join('\n\n')
+}
+
+const sanitizeGhostSuggestionOutput = (value = '', options = {}) => {
+  const linePrefix = String(options?.linePrefix || '')
+  const lineSuffix = String(options?.lineSuffix || '')
+  const normalized = String(value || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/```(?:json|typescript|javascript|tsx|jsx)?/gi, '')
+    .replace(/```/g, '')
+    .trim()
+
+  if (!normalized) return ''
+  if (/suggestionText/i.test(normalized)) return ''
+  if (/^\s*\{[\s\S]*\}\s*$/.test(normalized)) return ''
+  if (/^\s*\[[\s\S]*\]\s*$/.test(normalized)) return ''
+
+  const unquoted = normalized.replace(/^['"]|['"]$/g, '').trim()
+  if (!unquoted) return ''
+
+  const withoutPrefix = linePrefix && unquoted.startsWith(linePrefix)
+    ? unquoted.slice(linePrefix.length)
+    : unquoted
+
+  const finalText = withoutPrefix.trimEnd()
+  if (!finalText.trim()) return ''
+  if (lineSuffix && finalText.startsWith(lineSuffix)) return ''
+
+  return finalText.slice(0, 1200)
+}
+
+const inferGhostDefaultExportName = (fileContent = '') => {
+  const source = String(fileContent || '')
+  const preferredPatterns = [
+    /function\s+([A-Z][A-Za-z0-9_$]*)\s*\(/g,
+    /class\s+([A-Z][A-Za-z0-9_$]*)\s*/g,
+    /const\s+([A-Z][A-Za-z0-9_$]*)\s*=\s*\(/g,
+  ]
+
+  for (const pattern of preferredPatterns) {
+    const match = pattern.exec(source)
+    if (match?.[1]) return match[1]
+  }
+
+  return ''
+}
+
+const buildGhostHeuristicSuggestion = ({ language, linePrefix, lineSuffix, fileContent }) => {
+  const normalizedLanguage = String(language || '').toLowerCase()
+  const prefix = String(linePrefix || '')
+  const suffix = String(lineSuffix || '')
+  const trimmedPrefix = prefix.trim()
+
+  const isJsTs = ['javascript', 'typescript'].includes(normalizedLanguage)
+  if (!isJsTs) return ''
+
+  if (trimmedPrefix === 'export' && !suffix.trim()) {
+    const inferred = inferGhostDefaultExportName(fileContent)
+    return inferred ? ` default ${inferred}` : ' default '
+  }
+
+  return ''
+}
+
+const callGeminiGenerate = async (historyMessages, options = {}) => {
+  const temperature = Number.isFinite(Number(options.temperature))
+    ? Number(options.temperature)
+    : 0.25
+  const maxOutputTokens = Number.isFinite(Number(options.maxOutputTokens))
+    ? Math.max(24, Number(options.maxOutputTokens))
+    : 2048
+  const systemInstruction = String(options.systemInstruction || AI_SYSTEM_INSTRUCTION).trim() || AI_SYSTEM_INSTRUCTION
+
+  const requestBody = {
+    systemInstruction: {
+      role: 'system',
+      parts: [{ text: systemInstruction }],
+    },
+    contents: historyMessages,
+    generationConfig: {
+      temperature,
+      topP: 0.95,
+      maxOutputTokens,
+    },
+  }
+
+  const modelCandidates = [GEMINI_MODEL, ...GEMINI_FALLBACK_MODELS].filter(Boolean)
+  const triedModels = new Set()
+  const orderedModels = modelCandidates.filter((model) => {
+    if (triedModels.has(model)) return false
+    triedModels.add(model)
+    return true
+  })
+
+  let lastError = null
+
+  for (const modelName of orderedModels) {
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelName)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(requestBody),
+    })
+
+    const payload = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      const rawMessage =
+        String(payload?.error?.message || payload?.message || '').trim() ||
+        `Gemini request failed (${response.status})`
+      const normalizedMessage = normalizeGeminiErrorMessage(rawMessage)
+
+      const isNotFound = /unavailable for this api version|not found|not supported/i.test(normalizedMessage)
+      const isQuota = /quota exceeded|rate limit|too many requests/i.test(normalizedMessage)
+
+      lastError = new Error(`${normalizedMessage} [model: ${modelName}]`)
+
+      if ((isNotFound || isQuota) && modelName !== orderedModels[orderedModels.length - 1]) {
+        continue
+      }
+
+      throw lastError
+    }
+
+    const text = extractGeminiText(payload)
+    if (!text) {
+      lastError = new Error(`Gemini returned an empty response [model: ${modelName}]`)
+      continue
+    }
+
+    return text
+  }
+
+  throw lastError || new Error('Gemini request failed for all configured models.')
+}
+
+const buildGhostSuggestionPrompt = ({
+  fileContent,
+  contextBefore,
+  contextAfter,
+  language,
+  filename,
+  cursorLine,
+  cursorColumn,
+  linePrefix,
+  lineSuffix,
+  projectSummary,
+  project,
+}) => {
+  const normalizedLanguage = String(language || 'plaintext').trim() || 'plaintext'
+  const normalizedFilename = String(filename || 'untitled').trim() || 'untitled'
+  const normalizedSummary = truncateAiText(String(projectSummary || ''), AI_GHOST_MAX_PROJECT_SUMMARY_CHARS)
+  const relatedFilesContext = buildGhostRelatedFilesContext({
+    project,
+    filename: normalizedFilename,
+    fileContent,
+  })
+
+  return [
+    'Generate a single inline code continuation for this cursor.',
+    'Return only raw continuation text to insert at cursor. No JSON. No markdown. No explanation.',
+    'Do not repeat existing text before cursor. If uncertain, return empty output.',
+    '',
+    `Filename: ${normalizedFilename}`,
+    `Language: ${normalizedLanguage}`,
+    `Cursor: line ${cursorLine}, column ${cursorColumn}`,
+    `Current line prefix before cursor: ${String(linePrefix || '')}`,
+    `Current line suffix after cursor: ${String(lineSuffix || '')}`,
+    '',
+    'Current file (trimmed):',
+    '```',
+    truncateAiText(String(fileContent || ''), AI_GHOST_MAX_FILE_CHARS),
+    '```',
+    '',
+    'Context before cursor:',
+    '```',
+    truncateAiText(String(contextBefore || ''), AI_GHOST_MAX_CONTEXT_WINDOW_CHARS),
+    '```',
+    '',
+    'Context after cursor:',
+    '```',
+    truncateAiText(String(contextAfter || ''), 1000),
+    '```',
+    '',
+    relatedFilesContext
+      ? ['Related files from current imports:', relatedFilesContext].join('\n')
+      : 'Related files from current imports: (none found)',
+    '',
+    normalizedSummary
+      ? ['Project summary:', normalizedSummary].join('\n')
+      : 'Project summary: (not provided)',
+  ].join('\n')
 }
 
 const getUserDisplayName = (userId) => {
@@ -5226,6 +6093,339 @@ app.get('/api/projects/:projectId/activity', authMiddleware, async (req, res) =>
     })
   } catch (activityError) {
     return res.status(500).json({ message: `Failed to fetch activity: ${activityError.message}` })
+  }
+})
+
+app.get('/api/projects/:projectId/ai/conversations', authMiddleware, async (req, res) => {
+  const { projectId } = req.params
+  const { error } = assertAiProjectAccess(projectId, req.userId)
+  if (error) {
+    return res.status(error.status).json({ message: error.message })
+  }
+
+  try {
+    const conversations = await listAiConversations(projectId, req.userId)
+
+    return res.json({
+      conversations: conversations.map((entry) => ({
+        id: entry.id,
+        title: entry.title,
+        createdAt: entry.createdAt,
+        updatedAt: entry.updatedAt,
+      })),
+    })
+  } catch (conversationError) {
+    return res.status(500).json({ message: `Failed to load AI conversations: ${conversationError.message}` })
+  }
+})
+
+app.post('/api/projects/:projectId/ai/conversations', authMiddleware, async (req, res) => {
+  const { projectId } = req.params
+  const { error } = assertAiProjectAccess(projectId, req.userId)
+  if (error) {
+    return res.status(error.status).json({ message: error.message })
+  }
+
+  try {
+    const title = normalizeAiTitle(req.body?.title)
+    const conversation = await createAiConversation(projectId, req.userId, title)
+    return res.status(201).json({ conversation })
+  } catch (createError) {
+    return res.status(500).json({ message: `Failed to create AI conversation: ${createError.message}` })
+  }
+})
+
+app.post('/api/projects/:projectId/ai/ghost-suggestion', authMiddleware, async (req, res) => {
+  const { projectId } = req.params
+  const { project, error } = assertAiProjectAccess(projectId, req.userId)
+  if (error) {
+    return res.status(error.status).json({ message: error.message })
+  }
+
+  const config = ensureAiConfigured()
+  if (config.error) {
+    return res.status(config.error.status).json({ message: config.error.message })
+  }
+
+  const usage = checkAndTrackAiGhostUsage(projectId, req.userId)
+  if (!usage.ok) {
+    return res.status(usage.status).json({ message: usage.message })
+  }
+
+  const cursorLine = Math.max(1, Number(req.body?.cursorLine || 1))
+  const cursorColumn = Math.max(1, Number(req.body?.cursorColumn || 1))
+  const fileContent = String(req.body?.fileContent || '')
+  const contextBefore = String(req.body?.contextBefore || '')
+  const contextAfter = String(req.body?.contextAfter || '')
+  const language = String(req.body?.language || 'plaintext')
+  const filename = String(req.body?.filename || 'untitled')
+  const linePrefix = String(req.body?.linePrefix || '')
+  const lineSuffix = String(req.body?.lineSuffix || '')
+  const projectSummary = String(req.body?.projectSummary || '')
+
+  if (!fileContent.trim() && !contextBefore.trim() && !contextAfter.trim()) {
+    return res.json({ suggestionText: '' })
+  }
+
+  try {
+    const prompt = buildGhostSuggestionPrompt({
+      fileContent,
+      contextBefore,
+      contextAfter,
+      language,
+      filename,
+      cursorLine,
+      cursorColumn,
+      linePrefix,
+      lineSuffix,
+      projectSummary,
+      project,
+    })
+
+    const geminiText = await callGeminiGenerate(
+      [{ role: 'user', parts: [{ text: prompt }] }],
+      {
+        temperature: AI_GHOST_TEMPERATURE,
+        maxOutputTokens: AI_GHOST_MAX_OUTPUT_TOKENS,
+        systemInstruction: AI_GHOST_SYSTEM_INSTRUCTION,
+      },
+    )
+
+    const parsedSuggestion = parseGhostSuggestionText(geminiText, { linePrefix })
+    const sanitizedSuggestion = sanitizeGhostSuggestionOutput(parsedSuggestion, {
+      linePrefix,
+      lineSuffix,
+    })
+
+    if (sanitizedSuggestion) {
+      return res.json({ suggestionText: sanitizedSuggestion })
+    }
+
+    const heuristicSuggestion = sanitizeGhostSuggestionOutput(
+      buildGhostHeuristicSuggestion({
+        language,
+        linePrefix,
+        lineSuffix,
+        fileContent,
+      }),
+      {
+        linePrefix,
+        lineSuffix,
+      },
+    )
+
+    return res.json({ suggestionText: heuristicSuggestion })
+  } catch (ghostError) {
+    return res.status(500).json({ message: ghostError.message || 'Failed to generate ghost suggestion.' })
+  }
+})
+
+app.get('/api/projects/:projectId/ai/conversations/:conversationId/messages', authMiddleware, async (req, res) => {
+  const { projectId, conversationId } = req.params
+  const { error } = assertAiProjectAccess(projectId, req.userId)
+  if (error) {
+    return res.status(error.status).json({ message: error.message })
+  }
+
+  try {
+    const conversation = await getAiConversationForUser(conversationId, projectId, req.userId)
+    if (!conversation) {
+      return res.status(404).json({ message: 'Conversation not found' })
+    }
+
+    const messages = await listAiMessages(conversationId, 400)
+    return res.json({ messages })
+  } catch (messagesError) {
+    return res.status(500).json({ message: `Failed to load AI messages: ${messagesError.message}` })
+  }
+})
+
+app.post('/api/projects/:projectId/ai/conversations/:conversationId/clear', authMiddleware, async (req, res) => {
+  const { projectId, conversationId } = req.params
+  const { error } = assertAiProjectAccess(projectId, req.userId)
+  if (error) {
+    return res.status(error.status).json({ message: error.message })
+  }
+
+  try {
+    const conversation = await getAiConversationForUser(conversationId, projectId, req.userId)
+    if (!conversation) {
+      return res.status(404).json({ message: 'Conversation not found' })
+    }
+
+    await clearAiConversationMessages(conversationId)
+    return res.status(204).end()
+  } catch (clearError) {
+    return res.status(500).json({ message: `Failed to clear conversation: ${clearError.message}` })
+  }
+})
+
+app.delete('/api/projects/:projectId/ai/conversations/:conversationId', authMiddleware, async (req, res) => {
+  const { projectId, conversationId } = req.params
+  const { error } = assertAiProjectAccess(projectId, req.userId)
+  if (error) {
+    return res.status(error.status).json({ message: error.message })
+  }
+
+  try {
+    const conversation = await getAiConversationForUser(conversationId, projectId, req.userId)
+    if (!conversation) {
+      return res.status(404).json({ message: 'Conversation not found' })
+    }
+
+    await deleteAiConversation(conversationId)
+    return res.status(204).end()
+  } catch (deleteError) {
+    return res.status(500).json({ message: `Failed to delete conversation: ${deleteError.message}` })
+  }
+})
+
+app.post('/api/projects/:projectId/ai/conversations/:conversationId/stream', authMiddleware, async (req, res) => {
+  const { projectId, conversationId } = req.params
+  const { project, error } = assertAiProjectAccess(projectId, req.userId)
+  if (error) {
+    return res.status(error.status).json({ message: error.message })
+  }
+
+  const config = ensureAiConfigured()
+  if (config.error) {
+    return res.status(config.error.status).json({ message: config.error.message })
+  }
+
+  const userMessageText = sanitizeDbText(String(req.body?.message || '').trim())
+  if (!userMessageText) {
+    return res.status(400).json({ message: 'Message is required' })
+  }
+
+  try {
+    const conversation = await getAiConversationForUser(conversationId, projectId, req.userId)
+    if (!conversation) {
+      return res.status(404).json({ message: 'Conversation not found' })
+    }
+
+    const promptCount = await countAiUserPromptsForProject(projectId, req.userId)
+    if (promptCount >= AI_CHAT_PROJECT_PROMPT_LIMIT) {
+      return res.status(429).json({
+        message: `You cannot use AI chat in this project for more than ${AI_CHAT_PROJECT_PROMPT_LIMIT} prompts.`,
+      })
+    }
+
+    let conversationTitle = String(conversation.title || AI_DEFAULT_CONVERSATION_TITLE)
+
+    if (isDefaultAiConversationTitle(conversationTitle)) {
+      const derivedTitle = deriveAiConversationTitleFromMessage(userMessageText)
+      const updatedConversation = await updateAiConversationTitle(conversationId, derivedTitle)
+      if (updatedConversation?.title) {
+        conversationTitle = updatedConversation.title
+      }
+    }
+
+    const attachments = (Array.isArray(req.body?.attachments) ? req.body.attachments : [])
+      .slice(0, AI_MAX_ATTACHMENT_COUNT)
+      .map((entry) => normalizeAiAttachment(entry))
+      .filter(Boolean)
+
+    const promptWithContext = await buildPromptWithContext({
+      messageText: userMessageText,
+      project,
+      attachments,
+    })
+
+    await appendAiMessage({
+      conversationId,
+      projectId,
+      userId: req.userId,
+      role: 'user',
+      content: userMessageText,
+      attachments,
+    })
+
+    const historyMessages = await listAiMessages(conversationId, 500)
+    const geminiHistory = historyMessages
+      .slice(-AI_MAX_HISTORY_MESSAGES)
+      .map((entry) => toGeminiContentFromAiMessage(entry))
+
+    if (geminiHistory.length > 0) {
+      const lastItem = geminiHistory[geminiHistory.length - 1]
+      if (lastItem?.role === 'user') {
+        lastItem.parts = [{ text: promptWithContext }]
+      }
+    }
+
+    res.setHeader('Content-Type', 'text/event-stream')
+    res.setHeader('Cache-Control', 'no-cache, no-transform')
+    res.setHeader('Connection', 'keep-alive')
+    res.flushHeaders?.()
+
+    let streamClosed = false
+    req.on('close', () => {
+      streamClosed = true
+    })
+
+    const sendEvent = (payload) => {
+      if (streamClosed) return
+      res.write(`data: ${JSON.stringify(payload)}\n\n`)
+    }
+
+    sendEvent({ type: 'start' })
+
+    let assistantText = ''
+    try {
+      assistantText = await callGeminiGenerate(geminiHistory)
+    } catch (modelError) {
+      sendEvent({ type: 'error', message: modelError.message || 'Failed to generate AI response' })
+      if (!streamClosed) {
+        res.end()
+      }
+      return
+    }
+
+    const chunkSize = 28
+    for (let index = 0; index < assistantText.length; index += chunkSize) {
+      const chunk = assistantText.slice(index, index + chunkSize)
+      sendEvent({ type: 'chunk', chunk })
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      if (streamClosed) {
+        return
+      }
+    }
+
+    const assistantMessage = await appendAiMessage({
+      conversationId,
+      projectId,
+      userId: null,
+      role: 'assistant',
+      content: assistantText,
+      attachments: [],
+    })
+
+    sendEvent({
+      type: 'done',
+      message: {
+        id: assistantMessage.id,
+        conversationId,
+        conversationTitle,
+        role: 'assistant',
+        content: assistantMessage.content,
+        attachments: assistantMessage.attachments,
+        createdAt: assistantMessage.createdAt,
+      },
+    })
+
+    if (!streamClosed) {
+      res.end()
+    }
+  } catch (streamError) {
+    if (!res.headersSent) {
+      return res.status(500).json({ message: `Failed to stream AI response: ${streamError.message}` })
+    }
+
+    try {
+      res.write(`data: ${JSON.stringify({ type: 'error', message: streamError.message || 'Failed to stream AI response' })}\n\n`)
+    } catch {
+      // Ignore stream close write failures.
+    }
+    return res.end()
   }
 })
 

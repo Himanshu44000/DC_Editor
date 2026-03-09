@@ -14,6 +14,8 @@ DROP TABLE IF EXISTS collab_terminal_sessions CASCADE;
 DROP TABLE IF EXISTS collab_execution_jobs CASCADE;
 DROP TABLE IF EXISTS collab_chat_reactions CASCADE;
 DROP TABLE IF EXISTS collab_chat_messages CASCADE;
+DROP TABLE IF EXISTS collab_ai_messages CASCADE;
+DROP TABLE IF EXISTS collab_ai_conversations CASCADE;
 DROP TABLE IF EXISTS collab_cursors CASCADE;
 DROP TABLE IF EXISTS collab_file_locks CASCADE;
 DROP TABLE IF EXISTS collab_file_versions CASCADE;
@@ -236,6 +238,35 @@ CREATE TABLE collab_chat_reactions (
 
 CREATE INDEX idx_collab_chat_reactions_message ON collab_chat_reactions (message_id);
 CREATE INDEX idx_collab_chat_reactions_user ON collab_chat_reactions (user_id);
+
+-- ========================================
+-- AI ASSISTANT TABLES
+-- ========================================
+CREATE TABLE collab_ai_conversations (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES collab_projects(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES collab_users(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_collab_ai_conversations_project_user
+  ON collab_ai_conversations (project_id, user_id, updated_at DESC);
+
+CREATE TABLE collab_ai_messages (
+  id TEXT PRIMARY KEY,
+  conversation_id TEXT NOT NULL REFERENCES collab_ai_conversations(id) ON DELETE CASCADE,
+  project_id TEXT NOT NULL REFERENCES collab_projects(id) ON DELETE CASCADE,
+  user_id TEXT REFERENCES collab_users(id) ON DELETE SET NULL,
+  role TEXT NOT NULL, -- user, assistant
+  content TEXT NOT NULL,
+  attachments_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_collab_ai_messages_conversation_created
+  ON collab_ai_messages (conversation_id, created_at ASC);
 
 -- ========================================
 -- EXECUTION & TERMINAL TABLES

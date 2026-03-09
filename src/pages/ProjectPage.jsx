@@ -8,12 +8,40 @@ import FileTree from '../components/FileTree'
 import Terminal from '../components/Terminal'
 import InteractiveConsole from '../components/InteractiveConsole'
 import VoiceChannelPanel from '../components/VoiceChannelPanel'
+import AIAssistantPanel from '../components/AIAssistantPanel'
 
 const DEFAULT_AVATAR_PATH = '/branding/defaultAvatar.png'
 const TYPING_ACTIVE_WINDOW_MS = 6000
 const TYPING_SIGNAL_WINDOW_MS = 1800
 const COLLAB_ACK_TIMEOUT_MS = 2500
 const CURSOR_COLORS = ['#60a5fa', '#34d399', '#f59e0b', '#f472b6', '#a78bfa', '#22d3ee', '#fb7185', '#f97316']
+const GHOST_SUGGESTION_DEBOUNCE_MS = 620
+const GHOST_CONTEXT_WINDOW_LINES = 30
+const GHOST_PROJECT_SUMMARY_MAX_FILES = 24
+
+const isPascalCase = (value = '') => /^[A-Z][A-Za-z0-9_$]*$/.test(String(value || '').trim())
+
+const extractExportedSymbols = (source = '') => {
+  const text = String(source || '')
+  const symbols = new Set()
+
+  const patterns = [
+    /export\s+default\s+function\s+([A-Za-z_$][A-Za-z0-9_$]*)/g,
+    /export\s+function\s+([A-Za-z_$][A-Za-z0-9_$]*)/g,
+    /export\s+const\s+([A-Za-z_$][A-Za-z0-9_$]*)/g,
+    /export\s+class\s+([A-Za-z_$][A-Za-z0-9_$]*)/g,
+    /export\s+type\s+([A-Za-z_$][A-Za-z0-9_$]*)/g,
+    /export\s+interface\s+([A-Za-z_$][A-Za-z0-9_$]*)/g,
+  ]
+
+  for (const pattern of patterns) {
+    for (const match of text.matchAll(pattern)) {
+      if (match?.[1]) symbols.add(String(match[1]))
+    }
+  }
+
+  return Array.from(symbols)
+}
 
 const pickCursorColor = (userId = '') => {
   const source = String(userId || '')
@@ -86,6 +114,33 @@ const parentPathFromPath = (path) => {
   const normalized = normalizePath(path)
   if (!normalized || !normalized.includes('/')) return ''
   return normalized.slice(0, normalized.lastIndexOf('/'))
+}
+
+const fileStemFromPath = (filePath) => {
+  const name = fileNameFromPath(filePath)
+  const dotIndex = name.lastIndexOf('.')
+  if (dotIndex <= 0) return name
+  return name.slice(0, dotIndex)
+}
+
+const toRelativeImportPath = (fromFilePath, toFilePath) => {
+  const fromDir = parentPathFromPath(fromFilePath)
+  const fromParts = (fromDir ? fromDir.split('/') : []).filter(Boolean)
+  const toParts = normalizePath(toFilePath).split('/').filter(Boolean)
+
+  if (!toParts.length) return './'
+
+  while (fromParts.length && toParts.length && fromParts[0] === toParts[0]) {
+    fromParts.shift()
+    toParts.shift()
+  }
+
+  const up = fromParts.map(() => '..')
+  const down = toParts
+  const raw = [...up, ...down].join('/')
+  if (!raw) return './'
+  if (raw.startsWith('.')) return raw
+  return `./${raw}`
 }
 
 const buildTreeRows = (folders, files) => {
@@ -329,6 +384,8 @@ const ProjectPage = () => {
   const [isProjectLoading, setIsProjectLoading] = useState(true)
   const [isOpeningLivePreview, setIsOpeningLivePreview] = useState(false)
   const [templateCatalog, setTemplateCatalog] = useState([])
+  const [showAiAssistant, setShowAiAssistant] = useState(false)
+  const [isAiChatGenerating, setIsAiChatGenerating] = useState(false)
   const monacoConfiguredRef = useRef(false)
   const monacoRef = useRef(null)
   const editorRef = useRef(null)
@@ -342,6 +399,16 @@ const ProjectPage = () => {
   const disconnectWarnTimerRef = useRef(null)
   const latestProjectIdRef = useRef(projectId)
   const latestTokenRef = useRef(token)
+  const ghostSuggestionTextRef = useRef('')
+  const ghostSuggestionRangeRef = useRef(null)
+  const ghostSuggestionFileIdRef = useRef('')
+  const ghostRequestSeqRef = useRef(0)
+  const ghostDebounceTimerRef = useRef(null)
+  const ghostInlineProviderDisposeRef = useRef(null)
+  const ghostEditorActionDisposablesRef = useRef([])
+  const debugHoverWidgetRef = useRef(null)
+  const debugHoverDisposablesRef = useRef([])
+  const debugHoverHideTimerRef = useRef(null)
 
   useEffect(() => {
     latestProjectIdRef.current = projectId
@@ -372,6 +439,672 @@ const ProjectPage = () => {
     if (!selectedFileId) return null
     return files.find((file) => file.id === selectedFileId) || null
   }, [files, selectedFileId])
+
+  const resolvedRole = project?.role || (project?.ownerId === user?.id ? 'owner' : undefined)
+  const canEdit = Boolean(
+    typeof project?.canEdit === 'boolean'
+      ? project.canEdit
+      : resolvedRole === 'owner' || resolvedRole === 'collaborator',
+  )
+  const isOwner = resolvedRole === 'owner'
+  const canUseAiAssistant = canEdit
+
+  const projectSymbolIndex = useMemo(() => {
+    const byFile = new Map()
+    const allComponents = new Set()
+    const allExports = new Set()
+
+    for (const file of files) {
+      const pathValue = normalizePath(file?.path || file?.name || '')
+      if (!pathValue) continue
+
+      const stem = fileStemFromPath(pathValue)
+      const exportsList = extractExportedSymbols(String(file?.content || ''))
+      for (const symbol of exportsList) {
+        allExports.add(symbol)
+      }
+
+      if (isPascalCase(stem)) {
+        allComponents.add(stem)
+      }
+
+      byFile.set(pathValue, {
+        path: pathValue,
+        stem,
+        exports: exportsList,
+      })
+    }
+
+    return {
+      byFile,
+      allComponents: Array.from(allComponents),
+      allExports: Array.from(allExports),
+    }
+  }, [files])
+
+  const projectGhostSummary = useMemo(() => {
+    const lines = files
+      .map((file) => normalizePath(file.path || file.name || ''))
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b))
+      .slice(0, GHOST_PROJECT_SUMMARY_MAX_FILES)
+
+    if (!lines.length) return ''
+    return lines.join('\n')
+  }, [files])
+
+  const clearGhostSuggestion = useCallback(() => {
+    ghostSuggestionTextRef.current = ''
+    ghostSuggestionRangeRef.current = null
+    ghostSuggestionFileIdRef.current = ''
+
+    const editor = editorRef.current
+    if (editor) {
+      editor.trigger('ghost-suggest', 'editor.action.inlineSuggest.hide', {})
+    }
+  }, [])
+
+  const fetchGhostSuggestion = useCallback(async () => {
+    const editor = editorRef.current
+    const monaco = monacoRef.current
+    if (!editor || !monaco || !selectedFile || !projectId || !canEdit || isAiChatGenerating) {
+      clearGhostSuggestion()
+      return
+    }
+
+    const model = editor.getModel()
+    const position = editor.getPosition()
+    if (!model || !position) {
+      clearGhostSuggestion()
+      return
+    }
+
+    const lineContent = model.getLineContent(position.lineNumber)
+    const atLineEnd = position.column === lineContent.length + 1
+    if (!atLineEnd) {
+      clearGhostSuggestion()
+      return
+    }
+
+    const lineCount = model.getLineCount()
+    const startLine = Math.max(1, position.lineNumber - GHOST_CONTEXT_WINDOW_LINES)
+    const endLine = Math.min(lineCount, position.lineNumber + GHOST_CONTEXT_WINDOW_LINES)
+
+    const contextBefore = model.getValueInRange({
+      startLineNumber: startLine,
+      startColumn: 1,
+      endLineNumber: position.lineNumber,
+      endColumn: position.column,
+    })
+
+    const contextAfter = model.getValueInRange({
+      startLineNumber: position.lineNumber,
+      startColumn: position.column,
+      endLineNumber: endLine,
+      endColumn: model.getLineMaxColumn(endLine),
+    })
+
+    const requestSeq = ghostRequestSeqRef.current + 1
+    ghostRequestSeqRef.current = requestSeq
+    const linePrefix = lineContent.slice(0, Math.max(0, position.column - 1))
+    const lineSuffix = lineContent.slice(Math.max(0, position.column - 1))
+
+    const buildLocalGhostFallback = () => {
+      const normalizedLanguage = String(languageForFile(selectedFile?.name ?? '', project?.language) || '').toLowerCase()
+      const isJsTs = normalizedLanguage === 'typescript' || normalizedLanguage === 'javascript'
+      if (!isJsTs) return ''
+
+      const trimmedPrefix = linePrefix.trim()
+
+      const importMatch = linePrefix.match(/^\s*import\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*$/)
+      if (importMatch?.[1] && selectedFile?.path) {
+        const symbolName = importMatch[1]
+        const candidates = files
+          .map((entry) => ({
+            entry,
+            pathValue: normalizePath(entry?.path || entry?.name || ''),
+          }))
+          .filter(({ pathValue }) => {
+            if (!pathValue || pathValue === normalizePath(selectedFile.path || selectedFile.name || '')) return false
+            const stem = fileStemFromPath(pathValue)
+            const meta = projectSymbolIndex.byFile.get(pathValue)
+            const hasExportPrefix = Array.isArray(meta?.exports)
+              ? meta.exports.some((item) => item === symbolName || item.startsWith(symbolName))
+              : false
+            return stem === symbolName || stem.startsWith(symbolName) || hasExportPrefix
+          })
+          .sort((a, b) => {
+            const stemA = fileStemFromPath(a.pathValue)
+            const stemB = fileStemFromPath(b.pathValue)
+            const score = (stem) => {
+              if (stem === symbolName) return 0
+              if (stem.startsWith(symbolName)) return 1
+              return 2
+            }
+            const scoreA = score(stemA)
+            const scoreB = score(stemB)
+            if (scoreA !== scoreB) return scoreA - scoreB
+            return stemA.length - stemB.length
+          })
+
+        const candidate = candidates[0]?.entry || null
+        if (candidate) {
+          const candidatePath = normalizePath(candidate.path || candidate.name || '')
+          const stem = fileStemFromPath(candidatePath)
+          const completionTail = stem.startsWith(symbolName)
+            ? stem.slice(symbolName.length)
+            : ''
+
+          const candidateWithoutExt = candidatePath.replace(/\.[^.\/]+$/, '')
+          const fromPath = normalizePath(selectedFile.path || selectedFile.name || '')
+          const relative = toRelativeImportPath(fromPath, candidateWithoutExt)
+          return `${completionTail} from '${relative}'`
+        }
+
+        const exact = files.find((entry) => {
+          const pathValue = normalizePath(entry?.path || entry?.name || '')
+          if (!pathValue || pathValue === normalizePath(selectedFile.path || selectedFile.name || '')) return false
+          const stem = fileStemFromPath(pathValue)
+          return stem === symbolName
+        })
+
+        if (exact) {
+          const candidatePath = normalizePath(exact.path || exact.name || '')
+          const candidateWithoutExt = candidatePath.replace(/\.[^.\/]+$/, '')
+          const fromPath = normalizePath(selectedFile.path || selectedFile.name || '')
+          const relative = toRelativeImportPath(fromPath, candidateWithoutExt)
+          return ` from '${relative}'`
+        }
+      }
+
+      if (trimmedPrefix === 'export') {
+        const inferred = String(model.getValue().match(/function\s+([A-Z][A-Za-z0-9_$]*)\s*\(/)?.[1] || 'App')
+        return ` default ${inferred}`
+      }
+
+      const jsxTagMatch = linePrefix.match(/<([A-Z][A-Za-z0-9_$]*)$/)
+      if (jsxTagMatch?.[1]) {
+        const typedTag = jsxTagMatch[1]
+        const source = model.getValue()
+        const importedComponents = new Set()
+
+        const inferJsxPropsSnippet = (componentName) => {
+          const componentFile = files.find((entry) => {
+            const entryPath = normalizePath(entry?.path || entry?.name || '')
+            if (!entryPath) return false
+            return fileStemFromPath(entryPath) === componentName
+          })
+
+          const componentSource = String(componentFile?.content || '')
+          if (!componentSource.trim()) return ' />'
+
+          const propsTypeMatch = componentSource.match(/type\s+\w*Props\s*=\s*\{([\s\S]*?)\}/m)
+          if (!propsTypeMatch?.[1]) return ' />'
+
+          const block = propsTypeMatch[1]
+          const requiredProps = []
+          const propRegex = /^\s*([A-Za-z_$][A-Za-z0-9_$]*)\??\s*:\s*([^\n;]+)/gm
+          for (const match of block.matchAll(propRegex)) {
+            const propName = String(match?.[1] || '').trim()
+            const propType = String(match?.[2] || '').trim()
+            const optional = /\?\s*:/.test(match?.[0] || '')
+            if (!propName || optional) continue
+
+            let sampleValue = '""'
+            if (/^on[A-Z]/.test(propName)) {
+              sampleValue = '{() => {}}'
+            } else if (/(^is[A-Z])|active|enabled|visible/i.test(propName) || propType.includes('boolean')) {
+              sampleValue = '{false}'
+            } else if (/count|num|age|points|score|id/i.test(propName) || /\bnumber\b/i.test(propType)) {
+              sampleValue = '{0}'
+            } else {
+              const unionValue = propType.match(/'([^']+)'\s*(\||$)/)
+              if (unionValue?.[1]) {
+                sampleValue = `'${unionValue[1]}'`
+              }
+            }
+
+            requiredProps.push(`${propName}=${sampleValue}`)
+            if (requiredProps.length >= 3) break
+          }
+
+          if (!requiredProps.length) return ' />'
+          return ` ${requiredProps.join(' ')} />`
+        }
+
+        const defaultImportRegex = /^\s*import\s+([A-Z][A-Za-z0-9_$]*)\s+from\s+['"][^'"]+['"]/gm
+        for (const match of source.matchAll(defaultImportRegex)) {
+          if (match?.[1]) importedComponents.add(match[1])
+        }
+
+        const namedImportRegex = /^\s*import\s*\{([^}]+)\}\s*from\s+['"][^'"]+['"]/gm
+        for (const match of source.matchAll(namedImportRegex)) {
+          const namesBlock = String(match?.[1] || '')
+          for (const part of namesBlock.split(',')) {
+            const aliasPart = String(part || '').trim()
+            if (!aliasPart) continue
+            const aliasMatch = aliasPart.match(/\bas\s+([A-Z][A-Za-z0-9_$]*)$/)
+            const symbol = aliasMatch?.[1] || aliasPart
+            if (/^[A-Z][A-Za-z0-9_$]*$/.test(symbol)) {
+              importedComponents.add(symbol)
+            }
+          }
+        }
+
+        const projectComponentNames = projectSymbolIndex.allComponents
+
+        const candidates = Array.from(
+          new Set([
+            ...importedComponents,
+            ...projectComponentNames,
+            ...projectSymbolIndex.allExports.filter((item) => isPascalCase(item)),
+          ]),
+        )
+          .filter((name) => name.startsWith(typedTag))
+          .sort((a, b) => a.length - b.length)
+
+        const best = candidates[0] || ''
+        if (best && best !== typedTag) {
+          return best.slice(typedTag.length)
+        }
+        if (best === typedTag) {
+          return inferJsxPropsSnippet(best)
+        }
+      }
+
+      return ''
+    }
+
+    try {
+      const language = languageForFile(selectedFile?.name ?? '', project?.language)
+      const payload = await apiRequest(
+        `/projects/${projectId}/ai/ghost-suggestion`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            filename: selectedFile.path || selectedFile.name || 'untitled',
+            language,
+            fileContent: model.getValue(),
+            contextBefore,
+            contextAfter,
+            cursorLine: position.lineNumber,
+            cursorColumn: position.column,
+            linePrefix,
+            lineSuffix,
+            projectSummary: projectGhostSummary,
+          }),
+        },
+        getAuthToken,
+      )
+
+      if (requestSeq !== ghostRequestSeqRef.current) return
+
+      const suggestionText = String(payload?.suggestionText || '')
+      const looksMalformedGhost =
+        /suggestionText/i.test(suggestionText) ||
+        /^\s*\{/.test(suggestionText) ||
+        /^\s*\[/.test(suggestionText) ||
+        /```/.test(suggestionText)
+
+      if (looksMalformedGhost) {
+        const fallback = buildLocalGhostFallback()
+        if (!fallback) {
+          clearGhostSuggestion()
+          return
+        }
+        ghostSuggestionTextRef.current = fallback
+        ghostSuggestionFileIdRef.current = String(selectedFile.id || '')
+        ghostSuggestionRangeRef.current = {
+          startLineNumber: position.lineNumber,
+          startColumn: position.column,
+          endLineNumber: position.lineNumber,
+          endColumn: position.column,
+        }
+        editor.trigger('ghost-suggest', 'editor.action.inlineSuggest.trigger', {})
+        return
+      }
+
+      if (!suggestionText.trim()) {
+        const fallback = buildLocalGhostFallback()
+        if (!fallback) {
+          clearGhostSuggestion()
+          return
+        }
+        ghostSuggestionTextRef.current = fallback
+        ghostSuggestionFileIdRef.current = String(selectedFile.id || '')
+        ghostSuggestionRangeRef.current = {
+          startLineNumber: position.lineNumber,
+          startColumn: position.column,
+          endLineNumber: position.lineNumber,
+          endColumn: position.column,
+        }
+        editor.trigger('ghost-suggest', 'editor.action.inlineSuggest.trigger', {})
+        return
+      }
+
+      ghostSuggestionTextRef.current = suggestionText
+      ghostSuggestionFileIdRef.current = String(selectedFile.id || '')
+      ghostSuggestionRangeRef.current = {
+        startLineNumber: position.lineNumber,
+        startColumn: position.column,
+        endLineNumber: position.lineNumber,
+        endColumn: position.column,
+      }
+
+      editor.trigger('ghost-suggest', 'editor.action.inlineSuggest.trigger', {})
+    } catch {
+      if (requestSeq !== ghostRequestSeqRef.current) return
+      const fallback = buildLocalGhostFallback()
+      if (!fallback) {
+        clearGhostSuggestion()
+        return
+      }
+      ghostSuggestionTextRef.current = fallback
+      ghostSuggestionFileIdRef.current = String(selectedFile.id || '')
+      ghostSuggestionRangeRef.current = {
+        startLineNumber: position.lineNumber,
+        startColumn: position.column,
+        endLineNumber: position.lineNumber,
+        endColumn: position.column,
+      }
+      editor.trigger('ghost-suggest', 'editor.action.inlineSuggest.trigger', {})
+    }
+  }, [
+    files,
+    projectSymbolIndex,
+    selectedFile,
+    projectId,
+    canEdit,
+    isAiChatGenerating,
+    project?.language,
+    projectGhostSummary,
+    getAuthToken,
+    clearGhostSuggestion,
+  ])
+
+  const scheduleGhostSuggestion = useCallback(() => {
+    if (ghostDebounceTimerRef.current) {
+      window.clearTimeout(ghostDebounceTimerRef.current)
+      ghostDebounceTimerRef.current = null
+    }
+
+    clearGhostSuggestion()
+
+    if (!canEdit || isAiChatGenerating) {
+      return
+    }
+
+    ghostDebounceTimerRef.current = window.setTimeout(() => {
+      ghostDebounceTimerRef.current = null
+      fetchGhostSuggestion()
+    }, GHOST_SUGGESTION_DEBOUNCE_MS)
+  }, [canEdit, isAiChatGenerating, clearGhostSuggestion, fetchGhostSuggestion])
+
+  const bindGhostEditorActions = useCallback((editor, monaco) => {
+    if (!editor || !monaco) return
+
+    for (const disposable of ghostEditorActionDisposablesRef.current) {
+      disposable?.dispose?.()
+    }
+    ghostEditorActionDisposablesRef.current = []
+
+    const disposables = [
+      editor.addAction({
+        id: 'dc-editor.ghost.accept-all',
+        label: 'Accept Ghost Suggestion',
+        keybindings: [monaco.KeyCode.Tab],
+        precondition: 'inlineSuggestionVisible',
+        run: () => {
+          editor.trigger('ghost-suggest', 'editor.action.inlineSuggest.commit', {})
+          clearGhostSuggestion()
+        },
+      }),
+      editor.addAction({
+        id: 'dc-editor.ghost.accept-next-word',
+        label: 'Accept Next Word Ghost Suggestion',
+        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.RightArrow],
+        precondition: 'inlineSuggestionVisible',
+        run: () => {
+          editor.trigger('ghost-suggest', 'editor.action.inlineSuggest.acceptNextWord', {})
+        },
+      }),
+      editor.addAction({
+        id: 'dc-editor.ghost.dismiss',
+        label: 'Dismiss Ghost Suggestion',
+        keybindings: [monaco.KeyCode.Escape],
+        precondition: 'inlineSuggestionVisible',
+        run: () => {
+          clearGhostSuggestion()
+        },
+      }),
+    ]
+
+    ghostEditorActionDisposablesRef.current = disposables
+  }, [clearGhostSuggestion])
+
+  const clearDebugHover = useCallback(() => {
+    if (debugHoverHideTimerRef.current) {
+      window.clearTimeout(debugHoverHideTimerRef.current)
+      debugHoverHideTimerRef.current = null
+    }
+
+    const current = debugHoverWidgetRef.current
+    if (current?.editor && current?.widget) {
+      try {
+        current.editor.removeContentWidget(current.widget)
+      } catch {
+        // Ignore editor disposal races.
+      }
+    }
+    debugHoverWidgetRef.current = null
+  }, [])
+
+  const bindDebugHoverWidget = useCallback((editor, monaco) => {
+    if (!editor || !monaco) return
+
+    for (const disposable of debugHoverDisposablesRef.current) {
+      disposable?.dispose?.()
+    }
+    debugHoverDisposablesRef.current = []
+    clearDebugHover()
+
+    const widgetDom = document.createElement('div')
+    widgetDom.style.display = 'none'
+    widgetDom.style.minWidth = '280px'
+    widgetDom.style.maxWidth = '620px'
+    widgetDom.style.padding = '8px 10px'
+    widgetDom.style.border = '1px solid #334155'
+    widgetDom.style.borderRadius = '8px'
+    widgetDom.style.background = '#0f172a'
+    widgetDom.style.color = '#e2e8f0'
+    widgetDom.style.boxShadow = '0 10px 28px rgba(0, 0, 0, 0.35)'
+    widgetDom.style.zIndex = '25'
+    widgetDom.style.pointerEvents = 'auto'
+
+    const messageLine = document.createElement('div')
+    messageLine.style.fontSize = '12px'
+    messageLine.style.lineHeight = '1.35'
+    messageLine.style.marginBottom = '8px'
+    messageLine.style.whiteSpace = 'pre-wrap'
+    widgetDom.appendChild(messageLine)
+
+    const actionsRow = document.createElement('div')
+    actionsRow.style.display = 'flex'
+    actionsRow.style.gap = '8px'
+    actionsRow.style.flexWrap = 'wrap'
+    widgetDom.appendChild(actionsRow)
+
+    const makeActionButton = (label, onClick) => {
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.textContent = label
+      button.style.border = '1px solid #334155'
+      button.style.borderRadius = '6px'
+      button.style.background = '#111827'
+      button.style.color = '#93c5fd'
+      button.style.fontSize = '12px'
+      button.style.padding = '3px 8px'
+      button.style.cursor = 'pointer'
+      button.addEventListener('click', (event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        onClick?.()
+      })
+      return button
+    }
+
+    let activeMarker = null
+    let isHoveringDebugBox = false
+
+    const viewProblemButton = makeActionButton('View Problem', () => {
+      if (!activeMarker) return
+      editor.focus()
+      editor.setPosition({ lineNumber: activeMarker.startLineNumber, column: activeMarker.startColumn })
+      editor.revealLineInCenter(activeMarker.startLineNumber)
+    })
+
+    const quickFixButton = makeActionButton('Quick Fix', () => {
+      editor.focus()
+      editor.trigger('debug-hover', 'editor.action.quickFix', {})
+    })
+
+    const fixButton = makeActionButton('Fix', () => {
+      editor.focus()
+      editor.trigger('debug-hover', 'editor.action.codeAction', {
+        kind: 'quickfix',
+        apply: 'first',
+      })
+    })
+
+    actionsRow.appendChild(viewProblemButton)
+    actionsRow.appendChild(quickFixButton)
+    actionsRow.appendChild(fixButton)
+
+    const widget = {
+      getId: () => 'dc-editor-diagnostics-hover',
+      getDomNode: () => widgetDom,
+      getPosition: () => {
+        if (!activeMarker) return null
+        return {
+          position: {
+            lineNumber: Math.max(1, activeMarker.startLineNumber),
+            column: Math.max(1, activeMarker.startColumn),
+          },
+          preference: [monaco.editor.ContentWidgetPositionPreference.ABOVE],
+        }
+      },
+    }
+
+    const hideSoon = () => {
+      if (debugHoverHideTimerRef.current) {
+        window.clearTimeout(debugHoverHideTimerRef.current)
+      }
+      debugHoverHideTimerRef.current = window.setTimeout(() => {
+        if (isHoveringDebugBox) return
+        widgetDom.style.display = 'none'
+        activeMarker = null
+        try {
+          editor.removeContentWidget(widget)
+        } catch {
+          // Ignore disposal races.
+        }
+      }, 900)
+    }
+
+    const keepVisible = () => {
+      if (debugHoverHideTimerRef.current) {
+        window.clearTimeout(debugHoverHideTimerRef.current)
+        debugHoverHideTimerRef.current = null
+      }
+    }
+
+    widgetDom.addEventListener('mouseenter', () => {
+      isHoveringDebugBox = true
+      keepVisible()
+    })
+    widgetDom.addEventListener('mouseleave', () => {
+      isHoveringDebugBox = false
+      hideSoon()
+    })
+
+    const showForMarker = (marker) => {
+      if (!marker) return
+      activeMarker = marker
+      messageLine.textContent = String(marker.message || 'Problem detected')
+      widgetDom.style.display = 'block'
+      editor.addContentWidget(widget)
+      editor.layoutContentWidget(widget)
+      debugHoverWidgetRef.current = { editor, widget }
+    }
+
+    const onMouseMoveDisposable = editor.onMouseMove((event) => {
+      const model = editor.getModel()
+      const position = event?.target?.position
+      if (!model || !position) {
+        if (isHoveringDebugBox) return
+        hideSoon()
+        return
+      }
+
+      const markers = monaco.editor
+        .getModelMarkers({ resource: model.uri })
+        .filter((marker) => Number(marker.severity) === Number(monaco.MarkerSeverity.Error))
+
+      const marker = markers.find((item) => {
+        const sameLine = position.lineNumber >= item.startLineNumber && position.lineNumber <= item.endLineNumber
+        if (!sameLine) return false
+
+        if (position.lineNumber === item.startLineNumber && position.column < item.startColumn) return false
+        if (position.lineNumber === item.endLineNumber && position.column > item.endColumn) return false
+        return true
+      })
+
+      if (!marker) {
+        if (isHoveringDebugBox) return
+        hideSoon()
+        return
+      }
+
+      keepVisible()
+      showForMarker(marker)
+    })
+
+    const onBlurDisposable = editor.onDidBlurEditorText(() => {
+      hideSoon()
+    })
+
+    debugHoverDisposablesRef.current = [onMouseMoveDisposable, onBlurDisposable]
+  }, [clearDebugHover])
+
+  useEffect(() => {
+    if (ghostDebounceTimerRef.current) {
+      window.clearTimeout(ghostDebounceTimerRef.current)
+      ghostDebounceTimerRef.current = null
+    }
+    ghostRequestSeqRef.current += 1
+    clearGhostSuggestion()
+  }, [selectedFile?.id, isAiChatGenerating, canEdit, clearGhostSuggestion])
+
+  useEffect(() => () => {
+    if (ghostDebounceTimerRef.current) {
+      window.clearTimeout(ghostDebounceTimerRef.current)
+      ghostDebounceTimerRef.current = null
+    }
+
+    ghostInlineProviderDisposeRef.current?.dispose?.()
+    ghostInlineProviderDisposeRef.current = null
+
+    for (const disposable of ghostEditorActionDisposablesRef.current) {
+      disposable?.dispose?.()
+    }
+    ghostEditorActionDisposablesRef.current = []
+
+    for (const disposable of debugHoverDisposablesRef.current) {
+      disposable?.dispose?.()
+    }
+    debugHoverDisposablesRef.current = []
+    clearDebugHover()
+  }, [])
 
   useEffect(() => {
     selectedFileIdRef.current = selectedFileId
@@ -548,6 +1281,157 @@ const ProjectPage = () => {
   const configureMonaco = useCallback((monaco) => {
     if (!monaco || monacoConfiguredRef.current) return
 
+    const providerLanguageIds = [
+      'javascript',
+      'typescript',
+      'json',
+      'html',
+      'css',
+      'markdown',
+      'plaintext',
+      'python',
+      'java',
+      'cpp',
+      'c',
+      'sql',
+      'vue',
+      'shell',
+      'yaml',
+      'xml',
+      'go',
+      'rust',
+      'php',
+    ]
+
+    const providerDisposables = providerLanguageIds.map((languageId) =>
+      monaco.languages.registerInlineCompletionsProvider(languageId, {
+        provideInlineCompletions: (model, position) => {
+          const editor = editorRef.current
+          if (!editor || model !== editor.getModel()) {
+            return { items: [] }
+          }
+
+          if (String(ghostSuggestionFileIdRef.current || '') !== String(selectedFileIdRef.current || '')) {
+            return { items: [] }
+          }
+
+          const range = ghostSuggestionRangeRef.current
+          const text = String(ghostSuggestionTextRef.current || '')
+          if (!range || !text) {
+            return { items: [] }
+          }
+
+          const samePosition =
+            range.startLineNumber === position.lineNumber &&
+            range.startColumn === position.column &&
+            range.endLineNumber === position.lineNumber &&
+            range.endColumn === position.column
+
+          if (!samePosition) {
+            return { items: [] }
+          }
+
+          return {
+            items: [
+              {
+                insertText: text,
+                range,
+              },
+            ],
+          }
+        },
+        freeInlineCompletions: () => {},
+      }),
+    )
+
+    const fixLanguageIds = ['javascript', 'typescript']
+    const codeActionDisposables = fixLanguageIds.map((languageId) =>
+      monaco.languages.registerCodeActionProvider(languageId, {
+        provideCodeActions: (model, range, context) => {
+          const actions = []
+          const markers = Array.isArray(context?.markers) ? context.markers : []
+
+          for (const marker of markers) {
+            const message = String(marker?.message || '').toLowerCase()
+            const lineNumber = Number(marker?.startLineNumber || range.startLineNumber || 1)
+            const lineContent = model.getLineContent(Math.max(1, lineNumber))
+
+            if (message.includes("'export' expected") || message.includes('export expected')) {
+              if (/export\.\s*default/.test(lineContent)) {
+                const fixedLine = lineContent.replace(/export\.\s*default/g, 'export default')
+                actions.push({
+                  title: 'Replace "export." with "export "',
+                  kind: 'quickfix',
+                  edit: {
+                    edits: [
+                      {
+                        resource: model.uri,
+                        textEdit: {
+                          range: {
+                            startLineNumber: lineNumber,
+                            startColumn: 1,
+                            endLineNumber: lineNumber,
+                            endColumn: model.getLineMaxColumn(lineNumber),
+                          },
+                          text: fixedLine,
+                        },
+                      },
+                    ],
+                  },
+                  diagnostics: [marker],
+                  isPreferred: true,
+                })
+              }
+            }
+
+            if (message.includes('array element destructuring pattern expected')) {
+              if (/\[.*?,\s*\./.test(lineContent)) {
+                const fixedLine = lineContent.replace(/,\s*\./g, ', ')
+                actions.push({
+                  title: 'Remove invalid "." in array destructuring',
+                  kind: 'quickfix',
+                  edit: {
+                    edits: [
+                      {
+                        resource: model.uri,
+                        textEdit: {
+                          range: {
+                            startLineNumber: lineNumber,
+                            startColumn: 1,
+                            endLineNumber: lineNumber,
+                            endColumn: model.getLineMaxColumn(lineNumber),
+                          },
+                          text: fixedLine,
+                        },
+                      },
+                    ],
+                  },
+                  diagnostics: [marker],
+                  isPreferred: true,
+                })
+              }
+            }
+          }
+
+          return {
+            actions,
+            dispose: () => {},
+          }
+        },
+      }),
+    )
+
+    ghostInlineProviderDisposeRef.current = {
+      dispose: () => {
+        for (const disposable of providerDisposables) {
+          disposable?.dispose?.()
+        }
+        for (const disposable of codeActionDisposables) {
+          disposable?.dispose?.()
+        }
+      },
+    }
+
     monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions({
       noSemanticValidation: true,
       noSuggestionDiagnostics: true,
@@ -631,13 +1515,6 @@ const ProjectPage = () => {
     }
   }, [selectedFileId])
 
-  const resolvedRole = project?.role || (project?.ownerId === user?.id ? 'owner' : undefined)
-  const canEdit = Boolean(
-    typeof project?.canEdit === 'boolean'
-      ? project.canEdit
-      : resolvedRole === 'owner' || resolvedRole === 'collaborator',
-  )
-  const isOwner = resolvedRole === 'owner'
   const selectedFileIsImage = Boolean(
     selectedFile && (selectedFile.isBinary || isImagePath(selectedFile.path || selectedFile.name || '')),
   )
@@ -667,6 +1544,15 @@ const ProjectPage = () => {
       return text.includes(query) || name.includes(query)
     })
   }, [chat, chatSearch])
+
+  useEffect(() => {
+    setShowAiAssistant(false)
+  }, [projectId])
+
+  useEffect(() => {
+    if (canUseAiAssistant) return
+    setShowAiAssistant(false)
+  }, [canUseAiAssistant])
 
   const formatLastSeen = (value) => {
     if (!value) return 'Never'
@@ -1335,6 +2221,7 @@ const ProjectPage = () => {
       ),
     )
     queueFileUpdate(selectedFile.id, nextContent)
+    scheduleGhostSuggestion()
   }
 
   const onSendChat = (event) => {
@@ -1862,12 +2749,19 @@ const ProjectPage = () => {
                 editorRef.current = editor
                 monacoRef.current = monaco
                 configureMonaco(monaco)
+                bindGhostEditorActions(editor, monaco)
+                bindDebugHoverWidget(editor, monaco)
                 validateEditorImports(editor, monaco)
                 editor.onDidFocusEditorText(() => {
                   editorFocusedRef.current = true
                 })
                 editor.onDidBlurEditorText(() => {
                   editorFocusedRef.current = false
+                  clearGhostSuggestion()
+                  clearDebugHover()
+                })
+                editor.onDidChangeModelContent(() => {
+                  scheduleGhostSuggestion()
                 })
               }}
               options={{
@@ -1875,6 +2769,8 @@ const ProjectPage = () => {
                 fontSize: 14,
                 automaticLayout: true,
                 readOnly: !canEdit,
+                hover: { enabled: false },
+                inlineSuggest: { enabled: true },
               }}
             />
           </div>
@@ -1953,6 +2849,15 @@ const ProjectPage = () => {
             <span className="role-note">Template: {templateDisplayName}</span>
           </div>
           <div className="editor-head-side">
+            {canUseAiAssistant && (
+              <button
+                type="button"
+                className={`ai-assistant-toggle ${showAiAssistant ? 'active' : ''}`}
+                onClick={() => setShowAiAssistant((prev) => !prev)}
+              >
+                AI
+              </button>
+            )}
             <div className="typing-presence">
               {activeTypingUsers.length > 0 && (
                 <div className="typing-presence-chips">
@@ -2007,19 +2912,31 @@ const ProjectPage = () => {
                 fontSize: 14,
                 automaticLayout: true,
                 readOnly: !canEdit,
+                hover: { enabled: false },
+                inlineSuggest: { enabled: true },
               }}
               onMount={(editor, monaco) => {
                 editorRef.current = editor
                 monacoRef.current = monaco
                 configureMonaco(monaco)
+                bindGhostEditorActions(editor, monaco)
+                bindDebugHoverWidget(editor, monaco)
                 validateEditorImports(editor, monaco)
                 editor.onDidFocusEditorText(() => {
                   editorFocusedRef.current = true
                 })
                 editor.onDidBlurEditorText(() => {
                   editorFocusedRef.current = false
+                  clearGhostSuggestion()
+                  clearDebugHover()
                 })
-                editor.onDidChangeCursorPosition(handleCursorChange)
+                editor.onDidChangeCursorPosition((event) => {
+                  handleCursorChange(event)
+                  scheduleGhostSuggestion()
+                })
+                editor.onDidChangeModelContent(() => {
+                  scheduleGhostSuggestion()
+                })
               }}
             />
           )}
@@ -2050,7 +2967,17 @@ const ProjectPage = () => {
         {error && <p className="error-text">{error}</p>}
       </div>
 
-      <aside className="panel chat-panel">
+      <aside className={`panel chat-panel ${showAiAssistant ? 'ai-panel-open' : ''}`}>
+        <AIAssistantPanel
+          isOpen={showAiAssistant}
+          canUseAI={canUseAiAssistant}
+          projectId={projectId}
+          getAuthToken={getAuthToken}
+          selectedFile={selectedFile}
+          onClose={() => setShowAiAssistant(false)}
+          onSendingStateChange={setIsAiChatGenerating}
+        />
+
         <VoiceChannelPanel projectId={projectId} getAuthToken={getAuthToken} />
 
         {isOwner && (

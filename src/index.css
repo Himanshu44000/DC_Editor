@@ -702,6 +702,17 @@ label {
   min-width: 0;
 }
 
+.ai-assistant-toggle {
+  border-color: #1d4ed8;
+  background: #172554;
+  color: #dbeafe;
+}
+
+.ai-assistant-toggle.active {
+  border-color: #2563eb;
+  background: #1e3a8a;
+}
+
 .typing-presence {
   display: grid;
   gap: 0.25rem;
@@ -908,6 +919,341 @@ label {
   color: #94a3b8;
   display: inline-block;
   margin-top: 0.3rem;
+}
+
+.chat-panel {
+  position: relative;
+}
+
+.chat-panel.ai-panel-open {
+  overflow: visible;
+}
+
+.ai-assistant-overlay {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 6;
+  background: #0b1220;
+  border-radius: 12px;
+  border: 1px solid #1f2937;
+  padding: 0.7rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  min-width: 360px;
+  max-width: calc(100vw - 28px);
+  box-shadow: 0 14px 32px rgba(2, 6, 23, 0.62);
+}
+
+.ai-assistant-resizer {
+  position: absolute;
+  top: 0;
+  left: -6px;
+  bottom: 0;
+  width: 12px;
+  cursor: col-resize;
+  z-index: 2;
+}
+
+.ai-assistant-resizer::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 5px;
+  transform: translateY(-50%);
+  width: 2px;
+  height: 54px;
+  border-radius: 999px;
+  background: #1e3a8a;
+}
+
+body.ai-panel-resizing {
+  user-select: none;
+  cursor: col-resize;
+}
+
+.ai-assistant-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.ai-assistant-head h3 {
+  margin: 0;
+  min-height: 1.4rem;
+}
+
+.ai-sessions-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
+.ai-sessions-head strong {
+  font-size: 0.78rem;
+  color: #cbd5e1;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.ai-sessions-head button {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  font-size: 1.1rem;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ai-assistant-conversations {
+  display: grid;
+  align-content: start;
+  grid-auto-rows: max-content;
+  gap: 0.35rem;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid #1f2937;
+  border-radius: 10px;
+  padding: 0.45rem;
+  background: #020617;
+}
+
+.ai-conversation-row {
+  border: 1px solid #1f2937;
+  border-radius: 9px;
+  background: #0f172a;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.18rem;
+}
+
+.ai-conversation-open span {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ai-conversation-open small {
+  display: block;
+  color: #94a3b8;
+  font-size: 0.72rem;
+  margin-top: 0.15rem;
+}
+
+.ai-conversation-row.active {
+  border-color: #2563eb;
+  background: #111f3d;
+}
+
+.ai-conversation-open {
+  border: 0;
+  background: transparent;
+  color: #cbd5e1;
+  text-align: left;
+  font-size: 0.82rem;
+  padding: 0.26rem 0.4rem;
+  display: grid;
+  gap: 0.06rem;
+}
+
+.ai-conversation-row.active .ai-conversation-open {
+  color: #dbeafe;
+}
+
+.ai-conversation-delete {
+  border: 1px solid #334155;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 7px;
+  background: #111827;
+  color: #fca5a5;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.9rem;
+}
+
+.ai-conversation-delete:hover {
+  border-color: #7f1d1d;
+  background: #7f1d1d;
+  color: #fee2e2;
+}
+
+.ai-assistant-messages {
+  border: 1px solid #1f2937;
+  border-radius: 10px;
+  background: #020617;
+  padding: 0.45rem;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.ai-chat-head {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  border: 1px solid #1f2937;
+  border-radius: 10px;
+  padding: 0.42rem 0.5rem;
+  background: #020617;
+}
+
+.ai-chat-head button {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  padding: 0;
+}
+
+.ai-chat-head strong {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ai-chat-new {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  padding: 0;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.ai-run-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: #cbd5e1;
+  font-size: 0.78rem;
+  margin-top: -0.1rem;
+}
+
+.ai-run-dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 999px;
+  background: #38bdf8;
+  box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.7);
+  animation: ai-run-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes ai-run-pulse {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.6);
+  }
+  70% {
+    transform: scale(1);
+    box-shadow: 0 0 0 8px rgba(56, 189, 248, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(56, 189, 248, 0);
+  }
+}
+
+.ai-message-item {
+  border: 1px solid #1f2937;
+  border-radius: 10px;
+  padding: 0.4rem;
+}
+
+.ai-message-item.self {
+  border-color: #1d4ed8;
+}
+
+.ai-message-item.assistant {
+  border-color: #0f766e;
+}
+
+.ai-message-item p {
+  margin: 0.2rem 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.ai-message-item small {
+  color: #94a3b8;
+}
+
+.ai-message-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-bottom: 0.25rem;
+}
+
+.ai-message-attachments span {
+  border: 1px solid #334155;
+  border-radius: 999px;
+  padding: 0.12rem 0.42rem;
+  font-size: 0.74rem;
+}
+
+.ai-assistant-form {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.ai-assistant-form textarea {
+  min-height: 2.9rem;
+  resize: none;
+  overflow-y: hidden;
+  line-height: 1.35;
+}
+
+.ai-compose-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.35rem;
+  align-items: end;
+}
+
+.ai-compose-row > button:first-child {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  font-size: 1.05rem;
+}
+
+.ai-compose-row > button:last-child {
+  min-width: 56px;
+  height: 34px;
+  padding: 0.35rem 0.55rem;
+}
+
+.ai-attachment-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.ai-attachment-list button {
+  border: 1px solid #334155;
+  border-radius: 999px;
+  font-size: 0.76rem;
+  padding: 0.15rem 0.45rem;
+  background: #0f172a;
+}
+
+.hidden-input {
+  display: none;
 }
 
 .activity-box {
