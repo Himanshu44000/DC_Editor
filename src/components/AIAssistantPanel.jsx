@@ -602,6 +602,8 @@ const AIAssistantPanel = ({
     setResponsePhase('thinking')
     setError('')
 
+    let completedSuccessfully = false
+
     try {
       const token = await getAuthToken()
       const response = await fetch(`${API_BASE}/projects/${projectId}/ai/conversations/${targetConversationId}/stream`, {
@@ -635,7 +637,6 @@ const AIAssistantPanel = ({
       let buffer = ''
       let accumulatedAssistantText = ''
       let sawFirstChunk = false
-      let completedSuccessfully = false
 
       while (true) {
         const { value, done } = await reader.read()

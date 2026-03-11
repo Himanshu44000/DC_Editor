@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Questrial&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Manrope:wght@500;700;800&family=Questrial&display=swap');
 @import "tailwindcss";
 @custom-variant dark (&:where(.dark, .dark *));
 
@@ -933,7 +933,8 @@ label {
   position: absolute;
   top: 0;
   right: 0;
-  bottom: 0;
+  bottom: auto;
+  max-height: 70vh;
   z-index: 6;
   background: #0b1220;
   border-radius: 12px;
@@ -2037,161 +2038,525 @@ body.ai-panel-resizing {
   outline: none;
 }
 
-/** Practice Mode Layout **/
+/* ============================================
+   DSA PRACTICE MODE - Dark Theme Design
+   ============================================ */
+
 .practice-mode {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  width: 100%;
+  background: linear-gradient(135deg, #0a0f1a 0%, #0d1526 50%, #0f1a2e 100%);
+  font-family: 'Questrial', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  overflow: hidden;
 }
 
+/* --- Practice Header --- */
 .practice-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.75rem 1.5rem;
-  border-bottom: 1px solid #1e293b;
-  background: #0f172a;
+  padding: 0.85rem 1.5rem;
+  background: rgba(15, 23, 42, 0.95);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(59, 130, 246, 0.2);
+  box-shadow: 0 2px 16px rgba(0, 0, 0, 0.3);
+  z-index: 10;
+  position: relative;
+}
+
+.practice-header-left {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
 }
 
 .practice-header h2 {
   margin: 0;
-  font-size: 1.25rem;
+  font-size: 1.3rem;
+  font-weight: 600;
+  color: #f1f5f9;
+  font-family: 'Manrope', 'Inter', sans-serif;
+  letter-spacing: 0.02em;
 }
 
+.practice-header .role-note {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  padding: 0.3rem 0.7rem;
+  background: rgba(59, 130, 246, 0.15);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  border-radius: 20px;
+}
+
+.practice-header-logo {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.practice-header-logo img {
+  height: 130px;
+  width: auto;
+  object-fit: contain;
+}
+
+.practice-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.practice-header button {
+  padding: 0.55rem 1.2rem;
+  border-radius: 25px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  background: rgba(30, 41, 59, 0.8);
+  color: #e2e8f0;
+}
+
+.practice-header button:hover {
+  background: rgba(51, 65, 85, 0.9);
+  border-color: rgba(148, 163, 184, 0.5);
+  transform: translateY(-1px);
+}
+
+.practice-header button.run-btn {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  border: 1px solid #059669;
+  color: white;
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
+}
+
+.practice-header button.run-btn:hover {
+  background: linear-gradient(135deg, #059669 0%, #047857 100%);
+  box-shadow: 0 4px 14px rgba(16, 185, 129, 0.4);
+  transform: translateY(-2px);
+}
+
+.practice-header button.run-btn:disabled {
+  background: #94a3b8;
+  border-color: #94a3b8;
+  box-shadow: none;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.practice-header .language-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 1rem;
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  border: 1px solid #2563eb;
+  border-radius: 20px;
+  color: white;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+/* --- Practice Main Layout (50-50 Split) --- */
 .practice-layout {
   flex: 1;
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 1rem;
-  padding: 1rem;
+  gap: 0;
   overflow: hidden;
+  height: calc(100vh - 60px);
 }
 
+/* --- Editor Panel (Left Side) --- */
 .practice-editor {
   display: flex;
   flex-direction: column;
-  border: 1px solid #1e293b;
-  border-radius: 12px;
+  height: 100%;
+  background: #1e293b;
+  border-right: 1px solid rgba(59, 130, 246, 0.15);
   overflow: hidden;
-  background: #0f172a;
-}
-
-.stdin-box {
-  display: grid;
-  gap: 0.4rem;
-  padding: 0.75rem 1rem;
-  border-bottom: 1px solid #1e293b;
-}
-
-.stdin-box label {
-  font-size: 0.9rem;
-  color: #cbd5e1;
-}
-
-.stdin-box textarea {
-  width: 100%;
-  min-height: 72px;
-  border: 1px solid #334155;
-  background: #0b1220;
-  color: #f8fafc;
-  border-radius: 8px;
-  padding: 0.55rem 0.65rem;
-  resize: vertical;
-  font: inherit;
 }
 
 .practice-editor-controls {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.75rem 1rem;
-  border-bottom: 1px solid #1e293b;
-  gap: 1rem;
+  padding: 0.65rem 1rem;
+  background: rgba(15, 23, 42, 0.95);
+  border-bottom: 1px solid rgba(59, 130, 246, 0.2);
+  gap: 0.75rem;
   flex-wrap: wrap;
 }
 
 .file-selector {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.6rem;
   flex: 1;
 }
 
 .file-selector label {
-  font-size: 0.9rem;
-  font-weight: 600;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
   margin: 0;
 }
 
 .file-selector select {
   width: auto;
-  min-width: 200px;
+  min-width: 180px;
+  padding: 0.45rem 0.75rem;
+  background: rgba(30, 41, 59, 0.9);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  border-radius: 8px;
+  color: #f1f5f9;
+  font-size: 0.85rem;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  transition: all 0.2s ease;
+}
+
+.file-selector select:hover {
+  border-color: rgba(59, 130, 246, 0.5);
+  background: rgba(30, 41, 59, 1);
+}
+
+.file-selector select:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
 }
 
 .file-selector button {
-  padding: 0.4rem 0.7rem;
-  font-size: 0.85rem;
+  padding: 0.45rem 0.85rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  background: rgba(59, 130, 246, 0.15);
+  border: 1px solid rgba(59, 130, 246, 0.4);
+  color: #60a5fa;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
 }
 
+.file-selector button:hover {
+  background: rgba(59, 130, 246, 0.25);
+  border-color: #3b82f6;
+  transform: translateY(-1px);
+}
+
+.file-selector input {
+  padding: 0.45rem 0.75rem;
+  background: rgba(30, 41, 59, 0.9);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  border-radius: 8px;
+  color: #f1f5f9;
+  font-size: 0.85rem;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  transition: all 0.2s ease;
+  min-width: 150px;
+}
+
+.file-selector input:hover {
+  border-color: rgba(59, 130, 246, 0.5);
+  background: rgba(30, 41, 59, 1);
+}
+
+.file-selector input:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+}
+
+.file-selector input::placeholder {
+  color: #64748b;
+}
+
+.run-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.run-controls button {
+  padding: 0.5rem 1rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.run-controls button:first-child {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  border: 1px solid #059669;
+  color: white;
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.25);
+}
+
+.run-controls button:first-child:hover:not(:disabled) {
+  background: linear-gradient(135deg, #059669 0%, #047857 100%);
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.35);
+  transform: translateY(-1px);
+}
+
+.run-controls button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.practice-editor .monaco-editor,
+.practice-editor .overflow-guard {
+  border-radius: 0;
+}
+
+/* --- Console Panel (Right Side) --- */
 .practice-console {
   display: flex;
   flex-direction: column;
-  border: 1px solid #1e293b;
-  border-radius: 12px;
-  padding: 1rem;
-  background: #0f172a;
-  overflow: auto;
+  height: 100%;
+  background: rgba(15, 23, 42, 0.95);
+  border-left: 1px solid rgba(59, 130, 246, 0.15);
+  overflow: hidden;
+}
+
+.practice-console-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  background: rgba(30, 41, 59, 0.8);
+  border-bottom: 1px solid rgba(59, 130, 246, 0.2);
 }
 
 .practice-console h4 {
-  margin: 0 0 1rem;
-  color: #94a3b8;
-  font-size: 1rem;
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #e2e8f0;
+  font-family: 'Manrope', 'Inter', sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
 
+/* --- STDIN Box (Non-expandable) --- */
+.stdin-box {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.85rem 1rem;
+  background: rgba(30, 41, 59, 0.5);
+  border-bottom: 1px solid rgba(59, 130, 246, 0.15);
+}
+
+.stdin-box label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-family: 'Manrope', sans-serif;
+}
+
+.stdin-box textarea {
+  width: 100%;
+  height: 100px;
+  min-height: 100px;
+  max-height: 100px;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  background: #0f172a;
+  color: #e2e8f0;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  resize: none;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  transition: all 0.2s ease;
+}
+
+.stdin-box textarea:hover {
+  border-color: rgba(59, 130, 246, 0.5);
+}
+
+.stdin-box textarea:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.stdin-box textarea::placeholder {
+  color: #64748b;
+}
+
+/* --- Output Section (Interactive Console) --- */
+.practice-output-section {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.practice-output-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.65rem 1rem;
+  background: rgba(30, 41, 59, 0.6);
+  border-bottom: 1px solid rgba(59, 130, 246, 0.15);
+}
+
+.practice-output-header h5 {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.practice-console .terminal-console {
+  flex: 1;
+  border-radius: 0;
+  border: none;
+  background: #0f172a;
+}
+
+/* --- Error Text --- */
+.practice-console .error-text {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  background: rgba(239, 68, 68, 0.15);
+  border-bottom: 1px solid rgba(239, 68, 68, 0.3);
+  color: #fca5a5;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+/* --- Output Meta --- */
 .output-meta {
   display: flex;
   gap: 1rem;
-  padding: 0.5rem;
-  background: #1e293b;
+  padding: 0.6rem 1rem;
+  background: rgba(30, 41, 59, 0.5);
   border-radius: 8px;
-  font-size: 0.85rem;
-  margin-bottom: 1rem;
+  font-size: 0.8rem;
+  margin: 0.75rem 1rem;
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  color: #94a3b8;
 }
 
 .timeout-badge {
   color: #fca5a5;
-  font-weight: bold;
+  font-weight: 700;
 }
 
 .output-section {
-  margin: 0.75rem 0;
+  margin: 0.75rem 1rem;
 }
 
 .output-section h5 {
   margin: 0 0 0.5rem;
   color: #94a3b8;
-  font-size: 0.9rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
 
 .output-section pre {
-  background: #1e293b;
-  padding: 0.75rem;
+  background: #0f172a;
+  padding: 0.85rem 1rem;
   border-radius: 8px;
   overflow-x: auto;
-  font-family: 'Courier New', monospace;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
   font-size: 0.85rem;
-  color: #e5e7eb;
+  color: #e2e8f0;
+  border: 1px solid rgba(59, 130, 246, 0.2);
 }
 
 .output-section.error pre {
   background: #450a0a;
   color: #fca5a5;
+  border-color: rgba(239, 68, 68, 0.3);
 }
 
 .no-output {
-  color: #64748b;
+  color: #94a3b8;
   font-style: italic;
+  padding: 1rem;
+  text-align: center;
+}
+
+/* --- Responsive Design for Practice Mode --- */
+@media (max-width: 1024px) {
+  .practice-layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr 1fr;
+  }
+  
+  .practice-editor {
+    border-right: none;
+    border-bottom: 1px solid rgba(59, 130, 246, 0.15);
+  }
+  
+  .practice-console {
+    border-left: none;
+  }
+  
+  .practice-header {
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+  }
+  
+  .practice-header-left {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  
+  .practice-header h2 {
+    font-size: 1.1rem;
+  }
+  
+  .practice-header-logo {
+    display: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .practice-header h2 {
+    font-size: 1rem;
+  }
+  
+  .file-selector {
+    flex-wrap: wrap;
+  }
+  
+  .file-selector select {
+    min-width: 140px;
+  }
+  
+  .stdin-box textarea {
+    height: 80px;
+    min-height: 80px;
+    max-height: 80px;
+  }
 }
 
 /** Project Mode Adjustments **/
@@ -2213,10 +2578,5 @@ body.ai-panel-resizing {
 
   .dashboard-grid {
     grid-template-columns: 1fr;
-  }
-
-  .practice-layout {
-    grid-template-columns: 1fr;
-    grid-template-rows: 1fr 1fr;
   }
 }

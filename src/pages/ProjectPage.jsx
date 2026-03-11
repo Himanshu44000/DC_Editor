@@ -8,7 +8,8 @@ import FileTree from '../components/FileTree'
 import Terminal from '../components/Terminal'
 import InteractiveConsole from '../components/InteractiveConsole'
 import VoiceChannelPanel from '../components/VoiceChannelPanel'
-import AIAssistantPanel from '../components/AIAssistantPanel'
+import AIChatPopup from '../components/AIChatPopup'
+import '../styles/ProjectPage.css'
 
 const DEFAULT_AVATAR_PATH = '/branding/defaultAvatar.png'
 const TYPING_ACTIVE_WINDOW_MS = 6000
@@ -384,7 +385,6 @@ const ProjectPage = () => {
   const [isProjectLoading, setIsProjectLoading] = useState(true)
   const [isOpeningLivePreview, setIsOpeningLivePreview] = useState(false)
   const [templateCatalog, setTemplateCatalog] = useState([])
-  const [showAiAssistant, setShowAiAssistant] = useState(false)
   const [isAiChatGenerating, setIsAiChatGenerating] = useState(false)
   const monacoConfiguredRef = useRef(false)
   const monacoRef = useRef(null)
@@ -1545,15 +1545,6 @@ const ProjectPage = () => {
     })
   }, [chat, chatSearch])
 
-  useEffect(() => {
-    setShowAiAssistant(false)
-  }, [projectId])
-
-  useEffect(() => {
-    if (canUseAiAssistant) return
-    setShowAiAssistant(false)
-  }, [canUseAiAssistant])
-
   const formatLastSeen = (value) => {
     if (!value) return 'Never'
     const date = new Date(value)
@@ -2647,23 +2638,39 @@ const ProjectPage = () => {
   if (isPracticeMode) {
     return (
       <section className="project-page practice-mode">
-        <div className="practice-header">
-          <div>
+        <header className="practice-header">
+          <div className="practice-header-left">
             <h2>{project?.name ?? 'Practice Project'}</h2>
-            <span className="role-note">Practice Mode - {templateDisplayName}</span>
-            <div className="runtime-status-row">
-              <span className={`runtime-status-pill ${cloudinaryOn ? 'on' : 'off'}`}>Cloudinary: {cloudinaryOn ? 'ON' : 'OFF'}</span>
-              <span className={`runtime-status-pill ${postgresOn ? 'on' : 'off'}`}>Postgres: {postgresOn ? 'ON' : 'OFF'}</span>
-              <span className={`runtime-status-pill ${queueOn ? 'on' : 'off'}`}>Queue: {queueOn ? 'ON' : 'OFF'}</span>
-              <span className={`runtime-status-pill ${redisOn ? 'on' : 'off'}`}>Redis: {redisOn ? 'ON' : 'OFF'}</span>
-            </div>
+            <span className="role-note">Practice Mode</span>
+            <span className="language-badge">
+              {(project?.language || 'JavaScript').toUpperCase()}
+            </span>
           </div>
-          <button type="button" onClick={() => navigate('/dashboard')}>
-            Dashboard
-          </button>
-        </div>
+          <div className="practice-header-logo">
+            <img src="/branding/logo1.png" alt="DC Editor" />
+          </div>
+          <div className="practice-header-actions">
+            <button 
+              type="button" 
+              className="run-btn"
+              onClick={handleRunClick} 
+              disabled={isRunning || !selectedFileRunnable}
+            >
+              {isRunning ? '● Running...' : '▶ Run Code'}
+            </button>
+            {isWebVanillaTemplate && (
+              <button type="button" onClick={handleOpenLivePreview} disabled={isOpeningLivePreview}>
+                {isOpeningLivePreview ? 'Opening...' : '🌐 Live Preview'}
+              </button>
+            )}
+            <button type="button" onClick={() => navigate('/dashboard')}>
+              ← Dashboard
+            </button>
+          </div>
+        </header>
 
         <div className="practice-layout">
+          {/* Left Panel - Code Editor */}
           <div className="practice-editor">
             <div className="practice-editor-controls">
               <div className="file-selector">
@@ -2678,7 +2685,7 @@ const ProjectPage = () => {
                 {canEdit && (
                   <>
                     <button onClick={createPracticeFile} type="button">
-                      + File
+                      + New
                     </button>
                     <button
                       onClick={() => {
@@ -2693,16 +2700,6 @@ const ProjectPage = () => {
                       Rename
                     </button>
                   </>
-                )}
-              </div>
-              <div className="run-controls">
-                <button type="button" onClick={handleRunClick} disabled={isRunning || !selectedFileRunnable}>
-                  {isRunning ? 'Running...' : '▶ Run'}
-                </button>
-                {isWebVanillaTemplate && (
-                  <button type="button" onClick={handleOpenLivePreview} disabled={isOpeningLivePreview}>
-                    {isOpeningLivePreview ? 'Opening...' : '🌐 Live'}
-                  </button>
                 )}
               </div>
             </div>
@@ -2740,7 +2737,7 @@ const ProjectPage = () => {
 
             <Editor
               key={selectedFile?.id || 'practice-editor'}
-              height="60vh"
+              height="100%"
               path={selectedFile?.path || selectedFile?.name || 'main.tsx'}
               language={languageForFile(selectedFile?.name ?? '', project?.language)}
               value={selectedFile?.content ?? ''}
@@ -2775,29 +2772,39 @@ const ProjectPage = () => {
             />
           </div>
 
+          {/* Right Panel - Console & Output */}
           <div className="practice-console">
-            <h4>Interactive Console</h4>
+            <div className="practice-console-header">
+              <h4>Interactive Console</h4>
+            </div>
+            
             <div className="stdin-box">
-              <label htmlFor="practice-stdin">stdin</label>
+              <label htmlFor="practice-stdin">STDIN</label>
               <textarea
                 id="practice-stdin"
                 value={practiceStdin}
                 onChange={(event) => setPracticeStdin(event.target.value)}
-                placeholder="Provide custom input for DSA tests..."
-                rows={6}
+                placeholder="Input for the program (Optional)"
                 spellCheck={false}
               />
             </div>
+            
             {error && <p className="error-text">{error}</p>}
-            <InteractiveConsole
-              isRunning={isRunning}
-              runStatus={runStatus}
-              onInput={handleConsoleInput}
-              output={consoleOutput}
-              projectId={projectId}
-              token={token}
-              filePath={selectedFilePath}
-            />
+            
+            <div className="practice-output-section">
+              <div className="practice-output-header">
+                <h5>Output</h5>
+              </div>
+              <InteractiveConsole
+                isRunning={isRunning}
+                runStatus={runStatus}
+                onInput={handleConsoleInput}
+                output={consoleOutput}
+                projectId={projectId}
+                token={token}
+                filePath={selectedFilePath}
+              />
+            </div>
           </div>
         </div>
       </section>
@@ -2810,17 +2817,11 @@ const ProjectPage = () => {
         <aside className="panel file-panel">
         <div className="panel-head">
           <h2>{project?.name ?? 'Project'}</h2>
-          <button type="button" onClick={() => navigate('/dashboard')}>
-            Back
+          <button type="button" className="back-button" onClick={() => navigate('/dashboard')}>
+            ← Back
           </button>
         </div>
         <p className="role-note">Role: {project?.role ?? '...'}</p>
-        <div className="runtime-status-row">
-          <span className={`runtime-status-pill ${cloudinaryOn ? 'on' : 'off'}`}>Cloudinary: {cloudinaryOn ? 'ON' : 'OFF'}</span>
-          <span className={`runtime-status-pill ${postgresOn ? 'on' : 'off'}`}>Postgres: {postgresOn ? 'ON' : 'OFF'}</span>
-          <span className={`runtime-status-pill ${queueOn ? 'on' : 'off'}`}>Queue: {queueOn ? 'ON' : 'OFF'}</span>
-          <span className={`runtime-status-pill ${redisOn ? 'on' : 'off'}`}>Redis: {redisOn ? 'ON' : 'OFF'}</span>
-        </div>
         {!canEdit && <p className="role-note">Viewer mode: read-only access</p>}
 
         <FileTree
@@ -2843,21 +2844,10 @@ const ProjectPage = () => {
       </aside>
 
       <div className="editor-panel">
-        <div className="editor-head">
-          <div className="editor-head-row">
-            <strong>{selectedFile?.name ?? 'No file selected'}</strong>
-            <span className="role-note">Template: {templateDisplayName}</span>
-          </div>
-          <div className="editor-head-side">
-            {canUseAiAssistant && (
-              <button
-                type="button"
-                className={`ai-assistant-toggle ${showAiAssistant ? 'active' : ''}`}
-                onClick={() => setShowAiAssistant((prev) => !prev)}
-              >
-                AI
-              </button>
-            )}
+        {/* Template Bar - Above Editor */}
+        <div className="template-bar">
+          <span>{templateDisplayName}</span>
+          <div className="template-bar-side">
             <div className="typing-presence">
               {activeTypingUsers.length > 0 && (
                 <div className="typing-presence-chips">
@@ -2967,53 +2957,71 @@ const ProjectPage = () => {
         {error && <p className="error-text">{error}</p>}
       </div>
 
-      <aside className={`panel chat-panel ${showAiAssistant ? 'ai-panel-open' : ''}`}>
-        <AIAssistantPanel
-          isOpen={showAiAssistant}
-          canUseAI={canUseAiAssistant}
-          projectId={projectId}
-          getAuthToken={getAuthToken}
-          selectedFile={selectedFile}
-          onClose={() => setShowAiAssistant(false)}
-          onSendingStateChange={setIsAiChatGenerating}
-        />
+      <aside className="panel chat-panel">
+        {/* Voice Channel Section */}
+        <div className="voice-channel-section">
+          <VoiceChannelPanel projectId={projectId} getAuthToken={getAuthToken} />
+        </div>
 
-        <VoiceChannelPanel projectId={projectId} getAuthToken={getAuthToken} />
-
+        {/* Invite Section */}
         {isOwner && (
-          <div className="invite-box stack-sm">
+          <div className="invite-section">
+            <h4>Invite Members</h4>
+            
             <label className="shared-terminal-toggle">
               <input
                 type="checkbox"
                 checked={Boolean(project?.sharedTerminalEnabled)}
                 onChange={(event) => onSharedTerminalCheckboxChange(event.target.checked)}
               />
-              Share terminal with collaborators
+              <span>Share terminal with collaborators</span>
             </label>
-            <label>
-              Invite Role
-              <select value={inviteRole} onChange={(event) => setInviteRole(event.target.value)}>
-                <option value="collaborator">Collaborator</option>
-                <option value="viewer">Viewer</option>
-              </select>
-            </label>
-            <button type="button" onClick={createInvite}>
-              Generate Invite Code
-            </button>
-            <button type="button" onClick={() => setShowMembersPanel((prev) => !prev)}>
-              {showMembersPanel ? 'Hide Members' : 'Manage Members'}
-            </button>
+
+            <div className="invite-role-options">
+              <label className={`invite-role-checkbox ${inviteRole === 'collaborator' ? 'selected' : ''}`}>
+                <input
+                  type="checkbox"
+                  checked={inviteRole === 'collaborator'}
+                  onChange={() => setInviteRole('collaborator')}
+                />
+                <span>Collaborator</span>
+              </label>
+              <label className={`invite-role-checkbox ${inviteRole === 'viewer' ? 'selected' : ''}`}>
+                <input
+                  type="checkbox"
+                  checked={inviteRole === 'viewer'}
+                  onChange={() => setInviteRole('viewer')}
+                />
+                <span>Viewer</span>
+              </label>
+            </div>
+
+            <div className="invite-actions">
+              <button type="button" className="generate-btn" onClick={createInvite}>
+                Generate Invite Code
+              </button>
+            </div>
+
             {inviteCode && (
-              <div className="invite-code-row">
-                <p>Code: {inviteCode}</p>
-                <button type="button" onClick={copyInviteCode}>
-                  {inviteCopied ? 'Copied' : 'Copy'}
+              <div className="invite-code-display">
+                <code>{inviteCode}</code>
+                <button type="button" className="copy-btn" onClick={copyInviteCode}>
+                  {inviteCopied ? '✓ Copied' : 'Copy'}
                 </button>
               </div>
             )}
+
+            <button 
+              type="button" 
+              className="manage-members-btn"
+              onClick={() => setShowMembersPanel((prev) => !prev)}
+            >
+              {showMembersPanel ? '▼ Hide Members' : '▶ Manage Members'}
+            </button>
+
             {showMembersPanel && (
-              <div className="members-box">
-                <h4>Collaborators & Viewers</h4>
+              <div className="members-panel">
+                <h5>Collaborators & Viewers</h5>
                 {membersLoading ? (
                   <p className="role-note">Loading members...</p>
                 ) : members.length === 0 ? (
@@ -3022,16 +3030,14 @@ const ProjectPage = () => {
                   <div className="members-list">
                     {members.map((member) => (
                       <div key={member.userId} className="member-item">
-                        <div>
+                        <div className="member-info">
                           <strong>{member.userName || member.email || 'Unknown'}</strong>
-                          <p>
-                            <span className={member.isOnline ? 'member-online' : 'member-offline'}>
+                          <small>
+                            <span className={`member-status ${member.isOnline ? 'online' : 'offline'}`}>
                               {member.isOnline ? 'Online' : 'Offline'}
                             </span>
-                            {' • '}
-                            {member.role}
-                          </p>
-                          <small>Last seen: {member.isOnline ? 'Active now' : formatLastSeen(member.lastSeenAt)}</small>
+                            {' • '}{member.role}
+                          </small>
                         </div>
                         <button
                           type="button"
@@ -3039,7 +3045,7 @@ const ProjectPage = () => {
                           onClick={() => removeMemberAccess(member)}
                           disabled={Boolean(removingMemberId)}
                         >
-                          {removingMemberId === member.userId ? 'Removing...' : 'Remove'}
+                          {removingMemberId === member.userId ? '...' : '✕'}
                         </button>
                       </div>
                     ))}
@@ -3049,48 +3055,66 @@ const ProjectPage = () => {
             )}
           </div>
         )}
-        <div className="chat-head-row">
-          <h3>Project Chat</h3>
-          <input
-            className="chat-search-input"
-            value={chatSearch}
-            onChange={(event) => setChatSearch(event.target.value)}
-            placeholder="Search chat"
-          />
-        </div>
-        <div className="chat-box">
-          {filteredChat.map((message) => (
-            <div key={message.id} className={`chat-item ${message.userId === user?.id ? 'self' : ''}`}>
-              <strong>{message.userName || (message.userId === user?.id ? 'You' : 'User')}</strong>
-              <p>{message.message}</p>
-              <small>{message.createdAt ? new Date(message.createdAt).toLocaleString() : ''}</small>
-            </div>
-          ))}
-          {filteredChat.length === 0 && <p className="role-note">No matching chats found.</p>}
+
+        {/* Chat Section */}
+        <div className="chat-section">
+          <div className="chat-head-row">
+            <h3>Project Chat</h3>
+            <input
+              className="chat-search-input"
+              value={chatSearch}
+              onChange={(event) => setChatSearch(event.target.value)}
+              placeholder="Search..."
+            />
+          </div>
+          <div className="chat-messages-container">
+            {filteredChat.map((message) => (
+              <div key={message.id} className={`chat-item ${message.userId === user?.id ? 'self' : ''}`}>
+                <strong>{message.userName || (message.userId === user?.id ? 'You' : 'User')}</strong>
+                <p>{message.message}</p>
+                <small>{message.createdAt ? new Date(message.createdAt).toLocaleString() : ''}</small>
+              </div>
+            ))}
+            {filteredChat.length === 0 && <p className="role-note">No matching chats found.</p>}
+          </div>
+
+          <form onSubmit={onSendChat} className="chat-form">
+            <input
+              value={chatInput}
+              onChange={(event) => setChatInput(event.target.value)}
+              placeholder="Type a message..."
+            />
+            <button type="submit">Send</button>
+          </form>
         </div>
 
-        <form onSubmit={onSendChat} className="chat-form">
-          <input
-            value={chatInput}
-            onChange={(event) => setChatInput(event.target.value)}
-            placeholder="Type a message"
-          />
-          <button type="submit">Send</button>
-        </form>
-
-        <h3>Activity Feed</h3>
-        <div className="activity-box">
-          {activities.length === 0 && <p className="role-note">No recent activity yet.</p>}
-          {activities.map((entry) => (
-            <div key={entry.id} className="activity-item">
-              <strong>{entry.userId === user?.id ? user?.name || entry.userName || 'You' : entry.userName || 'Unknown'}</strong>
-              <p>{describeActivity(entry)}</p>
-              <small>{new Date(entry.createdAt).toLocaleString()}</small>
-            </div>
-          ))}
+        {/* Activity Feed Section */}
+        <div className="activity-section">
+          <h3>Activity Feed</h3>
+          <div className="activity-feed">
+            {activities.length === 0 && <p className="role-note">No recent activity yet.</p>}
+            {activities.map((entry) => (
+              <div key={entry.id} className="activity-item">
+                <strong>{entry.userId === user?.id ? user?.name || entry.userName || 'You' : entry.userName || 'Unknown'}</strong>
+                <p>{describeActivity(entry)}</p>
+                <small>{new Date(entry.createdAt).toLocaleString()}</small>
+              </div>
+            ))}
+          </div>
         </div>
         </aside>
       </section>
+
+      {/* AI Chatbot Popup */}
+      <AIChatPopup 
+        projectId={projectId}
+        getAuthToken={getAuthToken}
+        canUseAI={canUseAiAssistant}
+        selectedFile={selectedFile}
+        files={files}
+        onSendingStateChange={setIsAiChatGenerating}
+      />
+
       {showTerminalShareConfirm && (
         <div className="tree-confirm-backdrop" onClick={cancelSharedTerminalEnable}>
           <div className="tree-confirm-dialog" onClick={(event) => event.stopPropagation()}>
