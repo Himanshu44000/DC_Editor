@@ -2,9 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Room, RoomEvent, Track } from 'livekit-client'
 import { apiRequest } from '../lib/api'
 
-const MAX_VISIBLE_AVATARS = 5
+const MAX_VISIBLE_AVATARS = 8
 const DEFAULT_AVATAR_PATH = '/branding/defaultAvatar.png'
 const PARTICIPANTS_POLL_MS = 5000
+const SPEAKING_THRESHOLD_MS = 300
 
 const parseParticipantMeta = (participant, avatarOverrides = new Map()) => {
   let parsed = {}
@@ -31,6 +32,7 @@ const VoiceChannelPanel = ({ projectId, getAuthToken }) => {
   const audioContainerRef = useRef(null)
   const avatarOverridesRef = useRef(new Map())
   const [participants, setParticipants] = useState([])
+  const [speakingParticipants, setSpeakingParticipants] = useState(new Set())
   const [isJoined, setIsJoined] = useState(false)
   const [isJoining, setIsJoining] = useState(false)
   const [isLeaving, setIsLeaving] = useState(false)
@@ -123,6 +125,7 @@ const VoiceChannelPanel = ({ projectId, getAuthToken }) => {
       setIsJoined(false)
       setIsMuted(true)
       setParticipants([])
+      setSpeakingParticipants(new Set())
       return
     }
 
@@ -141,6 +144,7 @@ const VoiceChannelPanel = ({ projectId, getAuthToken }) => {
       setIsJoined(false)
       setIsMuted(true)
       setParticipants([])
+      setSpeakingParticipants(new Set())
       setIsLeaving(false)
     }
   }, [])
@@ -216,6 +220,12 @@ const VoiceChannelPanel = ({ projectId, getAuthToken }) => {
         }
       })
 
+      // Handle speaking detection
+      room.on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
+        const speakingIds = new Set(speakers.map((s) => String(s?.identity || '')))
+        setSpeakingParticipants(speakingIds)
+      })
+
       // Handle remote audio track subscription for playback
       room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
         attachTrack(track, participant)
@@ -272,52 +282,75 @@ const VoiceChannelPanel = ({ projectId, getAuthToken }) => {
   const extraParticipantsCount = Math.max(0, participants.length - MAX_VISIBLE_AVATARS)
 
   return (
-    <div className="voice-channel-box stack-sm">
+    <div className="voice-channel-panel-redesigned">
       {/* Hidden container for remote audio playback */}
       <div ref={audioContainerRef} style={{ display: 'none' }} />
       
       <div className="voice-channel-head">
         <h4>Voice Channel</h4>
-        <span className={`voice-channel-state ${isJoined ? 'on' : 'off'}`}>{isJoined ? 'Connected' : 'Idle'}</span>
+        <span className={`voice-channel-state ${isJoined ? 'on' : 'off'}`}>
+          {isJoined ? 'Connected' : 'Idle'}
+        </span>
       </div>
 
-      <div className="voice-channel-presence">
-        <span className="voice-channel-icon" aria-hidden="true">
-          🔊
-        </span>
+      <div className="voice-participants-grid">
         {visibleParticipants.length > 0 ? (
           <>
-            {visibleParticipants.map((participant) => (
-              <div key={participant.id} className="voice-participant-avatar" title={participant.name}>
-                <img
-                  src={participant.avatarUrl || DEFAULT_AVATAR_PATH}
-                  alt={participant.name}
-                  onError={(event) => {
-                    event.currentTarget.src = DEFAULT_AVATAR_PATH
-                  }}
-                />
-              </div>
-            ))}
-            {extraParticipantsCount > 0 && <span className="voice-participant-more">+{extraParticipantsCount}</span>}
+            {visibleParticipants.map((participant) => {
+              const isSpeaking = speakingParticipants.has(participant.id)
+              return (
+                <div 
+                  key={participant.id} 
+                  className={`voice-participant ${isSpeaking ? 'speaking' : ''}`}
+                  title={`${participant.name}${isSpeaking ? ' (speaking)' : ''}`}
+                >
+                  <img
+                    src={participant.avatarUrl || DEFAULT_AVATAR_PATH}
+                    alt={participant.name}
+                    onError={(event) => {
+                      event.currentTarget.src = DEFAULT_AVATAR_PATH
+                    }}
+                  />
+                  <span className="voice-participant-name">{participant.name}</span>
+                </div>
+              )
+            })}
+            {extraParticipantsCount > 0 && (
+              <div className="voice-participant-more">+{extraParticipantsCount}</div>
+            )}
           </>
         ) : (
-          <span className="voice-participant-empty">No one is in VC yet</span>
+          <span className="voice-participants-empty">No one is in VC yet</span>
         )}
       </div>
 
       <div className="voice-channel-actions">
-        {!isJoined && (
-          <button type="button" onClick={joinVoiceChannel} disabled={isJoining || isLeaving}>
-            {isJoining ? 'Joining...' : 'Join VC'}
+        {!isJoined ? (
+          <button 
+            type="button" 
+            className="join-btn"
+            onClick={joinVoiceChannel} 
+            disabled={isJoining || isLeaving}
+          >
+            {isJoining ? 'Joining...' : '🎙️ Join Voice Channel'}
           </button>
-        )}
-        {isJoined && (
+        ) : (
           <>
-            <button type="button" onClick={leaveVoiceChannel} disabled={isJoining || isLeaving}>
-              {isLeaving ? 'Leaving...' : 'Leave VC'}
+            <button 
+              type="button" 
+              className="leave-btn"
+              onClick={leaveVoiceChannel} 
+              disabled={isJoining || isLeaving}
+            >
+              {isLeaving ? 'Leaving...' : 'Leave'}
             </button>
-            <button type="button" onClick={toggleMute} disabled={isJoining || isLeaving}>
-              {isMuted ? 'Unmute' : 'Mute'}
+            <button 
+              type="button" 
+              className="mute-btn"
+              onClick={toggleMute} 
+              disabled={isJoining || isLeaving}
+            >
+              {isMuted ? '🔇 Unmute' : '🔊 Mute'}
             </button>
           </>
         )}
