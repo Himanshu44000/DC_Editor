@@ -378,6 +378,8 @@ const ProjectPage = () => {
   const [_LAST_SELECTED_FILE_ID, setLastSelectedFileId] = useState(null)
   const [isCreatingPracticeFile, setIsCreatingPracticeFile] = useState(false)
   const [practiceFileName, setPracticeFileName] = useState('')
+  const [isRenamingPracticeFile, setIsRenamingPracticeFile] = useState(false)
+  const [practiceRenameValue, setPracticeRenameValue] = useState('')
   const [pendingPracticeSelectPath, setPendingPracticeSelectPath] = useState('')
   const [showTerminalShareConfirm, setShowTerminalShareConfirm] = useState(false)
   const [isUploadingAsset, setIsUploadingAsset] = useState(false)
@@ -2054,6 +2056,8 @@ const ProjectPage = () => {
   const createPracticeFile = () => {
     if (!canEdit) return
     setError('')
+    setIsRenamingPracticeFile(false)
+    setPracticeRenameValue('')
     setIsCreatingPracticeFile(true)
     if (practiceFileName.trim()) return
 
@@ -2071,6 +2075,45 @@ const ProjectPage = () => {
   const cancelPracticeFileCreate = () => {
     setIsCreatingPracticeFile(false)
     setPracticeFileName('')
+  }
+
+  const startPracticeRename = () => {
+    if (!canEdit || !selectedFile) return
+    setError('')
+    setIsCreatingPracticeFile(false)
+    setPracticeFileName('')
+    setIsRenamingPracticeFile(true)
+    setPracticeRenameValue(selectedFile.path || selectedFile.name || '')
+  }
+
+  const cancelPracticeRename = () => {
+    setIsRenamingPracticeFile(false)
+    setPracticeRenameValue('')
+  }
+
+  const submitPracticeRename = () => {
+    if (!canEdit || !selectedFile) return
+
+    const name = practiceRenameValue.trim()
+    if (!name) {
+      setError('File name is required.')
+      return
+    }
+
+    const duplicate = files.some(
+      (file) =>
+        file.id !== selectedFile.id &&
+        normalizePath(file.path || file.name).toLowerCase() === normalizePath(name).toLowerCase(),
+    )
+    if (duplicate) {
+      setError('A file with this name already exists.')
+      return
+    }
+
+    renameFile(selectedFile.id, name)
+    setError('')
+    setIsRenamingPracticeFile(false)
+    setPracticeRenameValue('')
   }
 
   const submitPracticeFileCreate = () => {
@@ -2646,9 +2689,6 @@ const ProjectPage = () => {
               {(project?.language || 'JavaScript').toUpperCase()}
             </span>
           </div>
-          <div className="practice-header-logo">
-            <img src="/branding/logo1.png" alt="DC Editor" />
-          </div>
           <div className="practice-header-actions">
             <button 
               type="button" 
@@ -2673,7 +2713,7 @@ const ProjectPage = () => {
           {/* Left Panel - Code Editor */}
           <div className="practice-editor">
             <div className="practice-editor-controls">
-              <div className="file-selector">
+              <div className="file-selector practice-file-toolbar">
                 <label>File:</label>
                 <select value={selectedFile?.id || ''} onChange={(e) => setSelectedFileId(e.target.value)}>
                   {files.map((file) => (
@@ -2688,12 +2728,7 @@ const ProjectPage = () => {
                       + New
                     </button>
                     <button
-                      onClick={() => {
-                        if (!selectedFile) return
-                        const nextPath = window.prompt('Rename file path', selectedFile.path)
-                        if (!nextPath?.trim()) return
-                        renameFile(selectedFile.id, nextPath)
-                      }}
+                      onClick={startPracticeRename}
                       disabled={!selectedFile}
                       type="button"
                     >
@@ -2704,9 +2739,45 @@ const ProjectPage = () => {
               </div>
             </div>
 
+            {files.length > 1 && (
+              <div className="practice-file-tabs">
+                {files.map((file) => {
+                  const isActive = file.id === selectedFile?.id
+                  return (
+                    <div key={file.id} className={`practice-file-tab ${isActive ? 'active' : ''}`}>
+                      <button
+                        type="button"
+                        className="practice-file-tab-open"
+                        onClick={() => setSelectedFileId(file.id)}
+                        title={file.path || file.name}
+                      >
+                        <span>{file.name}</span>
+                      </button>
+                      {canEdit && (
+                        <button
+                          type="button"
+                          className="practice-file-tab-delete"
+                          onClick={() => deleteFile(file.id)}
+                          title={`Delete ${file.name}`}
+                          aria-label={`Delete ${file.name}`}
+                        >
+                          <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+                            <path
+                              fill="currentColor"
+                              d="M5.22 5.22a.75.75 0 0 1 1.06 0L10 8.94l3.72-3.72a.75.75 0 1 1 1.06 1.06L11.06 10l3.72 3.72a.75.75 0 1 1-1.06 1.06L10 11.06l-3.72 3.72a.75.75 0 1 1-1.06-1.06L8.94 10 5.22 6.28a.75.75 0 0 1 0-1.06Z"
+                            />
+                          </svg>
+                        </button>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
             {canEdit && isCreatingPracticeFile && (
-              <div className="practice-editor-controls">
-                <div className="file-selector">
+              <div className="practice-editor-controls practice-inline-form-row">
+                <div className="file-selector practice-file-form">
                   <label>New file:</label>
                   <input
                     ref={practiceFileInputRef}
@@ -2729,6 +2800,36 @@ const ProjectPage = () => {
                     Create
                   </button>
                   <button type="button" onClick={cancelPracticeFileCreate}>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {canEdit && isRenamingPracticeFile && (
+              <div className="practice-editor-controls practice-inline-form-row">
+                <div className="file-selector practice-file-form">
+                  <label>Rename:</label>
+                  <input
+                    value={practiceRenameValue}
+                    onChange={(event) => setPracticeRenameValue(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault()
+                        submitPracticeRename()
+                      }
+                      if (event.key === 'Escape') {
+                        event.preventDefault()
+                        cancelPracticeRename()
+                      }
+                    }}
+                    placeholder="example.js"
+                    autoFocus
+                  />
+                  <button type="button" onClick={submitPracticeRename}>
+                    Save
+                  </button>
+                  <button type="button" onClick={cancelPracticeRename}>
                     Cancel
                   </button>
                 </div>

@@ -10,6 +10,12 @@ const emptyProfile = {
   pronouns: '',
   company: '',
   location: '',
+  jobTitle: '',
+  websiteUrl: '',
+  githubProfile: '',
+  linkedinUrl: '',
+  portfolioUrl: '',
+  skills: '',
   avatarUrl: '',
 }
 
@@ -20,6 +26,9 @@ const isDefaultAvatarValue = (value = '') => {
   if (!normalized) return true
   return normalized === DEFAULT_AVATAR_PATH
 }
+
+const fieldClassName =
+  'w-full rounded-xl border border-slate-300/80 bg-white/90 px-4 py-3 text-sm text-slate-900 placeholder-slate-400 transition focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 dark:border-slate-600/80 dark:bg-slate-800/50 dark:text-slate-100 dark:placeholder-slate-500 dark:focus:border-slate-500 dark:focus:ring-slate-700'
 
 const ProfilePage = () => {
   const navigate = useNavigate()
@@ -34,6 +43,20 @@ const ProfilePage = () => {
   const fileInputRef = useRef(null)
   const hasCustomAvatar = !isDefaultAvatarValue(form.avatarUrl)
   const previewAvatarUrl = hasCustomAvatar ? form.avatarUrl : DEFAULT_AVATAR_PATH
+  const profileCompletion = [
+    form.name,
+    form.bio,
+    form.pronouns,
+    form.company,
+    form.location,
+    form.jobTitle,
+    form.websiteUrl,
+    form.githubProfile,
+    form.linkedinUrl,
+    form.portfolioUrl,
+    form.skills,
+  ].filter((value) => String(value || '').trim()).length
+  const completionPercent = Math.round((profileCompletion / 11) * 100)
 
   useEffect(() => {
     let cancelled = false
@@ -48,6 +71,12 @@ const ProfilePage = () => {
           pronouns: data?.user?.pronouns || '',
           company: data?.user?.company || '',
           location: data?.user?.location || '',
+          jobTitle: data?.user?.jobTitle || '',
+          websiteUrl: data?.user?.websiteUrl || '',
+          githubProfile: data?.user?.githubProfile || '',
+          linkedinUrl: data?.user?.linkedinUrl || '',
+          portfolioUrl: data?.user?.portfolioUrl || '',
+          skills: data?.user?.skills || '',
           avatarUrl: data?.user?.avatarUrl || '',
         })
       } catch (loadError) {
@@ -136,14 +165,7 @@ const ProfilePage = () => {
     setError('')
 
     try {
-      const payload = {
-        name: form.name,
-        bio: form.bio,
-        pronouns: form.pronouns,
-        company: form.company,
-        location: form.location,
-        avatarUrl: form.avatarUrl,
-      }
+      const payload = { ...form }
       const data = await apiRequest(
         '/me',
         {
@@ -153,15 +175,20 @@ const ProfilePage = () => {
         getAuthToken,
       )
 
-      setForm((prev) => ({
-        ...prev,
-        name: data?.user?.name || prev.name,
+      setForm({
+        name: data?.user?.name || '',
         bio: data?.user?.bio || '',
         pronouns: data?.user?.pronouns || '',
         company: data?.user?.company || '',
         location: data?.user?.location || '',
+        jobTitle: data?.user?.jobTitle || '',
+        websiteUrl: data?.user?.websiteUrl || '',
+        githubProfile: data?.user?.githubProfile || '',
+        linkedinUrl: data?.user?.linkedinUrl || '',
+        portfolioUrl: data?.user?.portfolioUrl || '',
+        skills: data?.user?.skills || '',
         avatarUrl: data?.user?.avatarUrl || '',
-      }))
+      })
       setSuccess('Profile updated successfully.')
     } catch (saveError) {
       setError(saveError.message || 'Failed to update profile')
@@ -170,13 +197,30 @@ const ProfilePage = () => {
     }
   }
 
+  const renderInput = (label, key, options = {}) => (
+    <div>
+      <label className="mb-2 block font-['Manrope',sans-serif] text-[11px] font-extrabold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
+        {label}
+      </label>
+      <input
+        type={options.type || 'text'}
+        value={form[key]}
+        onChange={(event) => setForm((prev) => ({ ...prev, [key]: event.target.value }))}
+        placeholder={options.placeholder || ''}
+        maxLength={options.maxLength}
+        required={options.required}
+        className={fieldClassName}
+      />
+    </div>
+  )
+
   if (loading) {
     return (
       <>
         <Navbar variant="app" />
-        <section className="-m-4 min-h-screen overflow-hidden bg-[radial-gradient(circle_at_12%_8%,rgba(148,163,184,0.24),transparent_34%),linear-gradient(170deg,#f8fafc_0%,#ffffff_52%,#eef2f7_100%)] px-4 pb-16 pt-24 font-['Questrial',sans-serif] text-slate-900 antialiased dark:bg-[radial-gradient(circle_at_12%_8%,rgba(59,130,246,0.18),transparent_34%),linear-gradient(170deg,#01030a_0%,#020611_55%,#00030c_100%)] dark:text-slate-100 md:px-6">
-          <div className="mx-auto max-w-2xl">
-            <div className="rounded-2xl border border-slate-300/70 bg-white/75 p-8 shadow-xl shadow-slate-200/60 backdrop-blur-md dark:border-slate-700/80 dark:bg-slate-900/70 dark:shadow-black/35">
+        <section className="dashboard-modern profile-modern -m-4 min-h-screen overflow-hidden bg-[radial-gradient(circle_at_12%_8%,rgba(148,163,184,0.24),transparent_34%),linear-gradient(170deg,#f8fafc_0%,#ffffff_52%,#eef2f7_100%)] px-4 pb-16 pt-24 font-['Questrial',sans-serif] text-slate-900 antialiased dark:bg-[radial-gradient(circle_at_12%_8%,rgba(59,130,246,0.18),transparent_34%),linear-gradient(170deg,#01030a_0%,#020611_55%,#00030c_100%)] dark:text-slate-100 md:px-6">
+          <div className="mx-auto max-w-5xl">
+            <div className="rounded-3xl border border-slate-300/70 bg-white/75 p-8 shadow-xl shadow-slate-200/60 backdrop-blur-md dark:border-slate-700/80 dark:bg-slate-900/70 dark:shadow-black/35">
               <div className="flex items-center justify-center">
                 <div className="h-8 w-8 animate-spin rounded-full border-4 border-slate-300 border-t-slate-600 dark:border-slate-600 dark:border-t-slate-300"></div>
                 <p className="ml-3 text-sm text-slate-600 dark:text-slate-300">Loading profile...</p>
@@ -191,254 +235,323 @@ const ProfilePage = () => {
   return (
     <>
       <Navbar variant="app" />
-      <section className="-m-4 min-h-screen overflow-hidden bg-[radial-gradient(circle_at_12%_8%,rgba(148,163,184,0.24),transparent_34%),linear-gradient(170deg,#f8fafc_0%,#ffffff_52%,#eef2f7_100%)] px-4 pb-16 pt-24 font-['Questrial',sans-serif] text-slate-900 antialiased dark:bg-[radial-gradient(circle_at_12%_8%,rgba(59,130,246,0.18),transparent_34%),linear-gradient(170deg,#01030a_0%,#020611_55%,#00030c_100%)] dark:text-slate-100 md:px-6">
-        <div className="mx-auto max-w-2xl">
-          {/* Header Card */}
-          <div className="relative overflow-hidden rounded-3xl border border-slate-300/60 bg-[radial-gradient(circle_at_8%_12%,rgba(148,163,184,0.2),transparent_35%),radial-gradient(circle_at_90%_0%,rgba(148,163,184,0.2),transparent_40%),linear-gradient(165deg,#f8fafc_0%,#ffffff_53%,#f1f5f9_100%)] p-6 shadow-xl shadow-slate-300/35 dark:border-slate-700/70 dark:bg-[radial-gradient(circle_at_8%_12%,rgba(148,163,184,0.12),transparent_35%),radial-gradient(circle_at_90%_0%,rgba(71,85,105,0.16),transparent_40%),linear-gradient(165deg,#03060d_0%,#06080e_58%,#020308_100%)] dark:shadow-black/45 md:p-8">
-            <div className="flex items-center justify-between">
-              <div>
+      <section className="dashboard-modern profile-modern -m-4 min-h-screen overflow-hidden bg-[radial-gradient(circle_at_12%_8%,rgba(148,163,184,0.24),transparent_34%),linear-gradient(170deg,#f8fafc_0%,#ffffff_52%,#eef2f7_100%)] px-4 pb-16 pt-24 font-['Questrial',sans-serif] text-slate-900 antialiased dark:bg-[radial-gradient(circle_at_12%_8%,rgba(59,130,246,0.18),transparent_34%),linear-gradient(170deg,#01030a_0%,#020611_55%,#00030c_100%)] dark:text-slate-100 md:px-6">
+        <div className="mx-auto max-w-6xl">
+          <div className="dash-hero dashboard-reveal profile-hero relative overflow-hidden rounded-3xl border border-slate-300/60 bg-[radial-gradient(circle_at_8%_12%,rgba(148,163,184,0.2),transparent_35%),radial-gradient(circle_at_90%_0%,rgba(148,163,184,0.2),transparent_40%),linear-gradient(165deg,#f8fafc_0%,#ffffff_53%,#f1f5f9_100%)] p-6 shadow-xl shadow-slate-300/35 dark:border-slate-700/70 dark:bg-[radial-gradient(circle_at_8%_12%,rgba(148,163,184,0.12),transparent_35%),radial-gradient(circle_at_90%_0%,rgba(71,85,105,0.16),transparent_40%),linear-gradient(165deg,#03060d_0%,#06080e_58%,#020308_100%)] dark:shadow-black/45 md:p-8">
+            <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+              <div className="max-w-2xl">
                 <p className="font-['Manrope',sans-serif] text-xs font-extrabold uppercase tracking-[0.2em] text-slate-600 dark:text-slate-300">
                   Account Settings
                 </p>
-                <h1 className="mt-2 text-2xl font-medium uppercase tracking-[0.03em] text-slate-900 dark:text-slate-100 sm:text-3xl">
-                  Edit Profile
+                <h1 className="mt-3 text-3xl font-medium uppercase tracking-[0.03em] text-slate-900 dark:text-slate-100 sm:text-4xl">
+                  Profile Workspace
                 </h1>
+                <p className="mt-3 max-w-xl text-sm text-slate-600 dark:text-slate-300">
+                  Keep your public collaborator details complete so teammates can identify you faster across projects, invites, and shared workspaces.
+                </p>
               </div>
-              <button
-                type="button"
-                onClick={() => navigate('/dashboard')}
-                className="inline-flex items-center gap-2 rounded-xl border border-slate-300/70 bg-white/80 px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:-translate-y-0.5 hover:bg-white dark:border-slate-700/80 dark:bg-slate-900/70 dark:text-slate-200 dark:hover:bg-slate-800"
-              >
-                <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-                </svg>
-                Dashboard
-              </button>
+
+              <div className="flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  onClick={() => navigate('/dashboard')}
+                  className="dash-secondary-btn inline-flex items-center gap-2 rounded-xl border border-slate-300/70 bg-white/80 px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:-translate-y-0.5 hover:bg-white dark:border-slate-700/80 dark:bg-slate-900/70 dark:text-slate-200 dark:hover:bg-slate-800"
+                >
+                  <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                  </svg>
+                  Dashboard
+                </button>
+                <button
+                  type="button"
+                  onClick={onSubmit}
+                  className="dash-primary-btn inline-flex items-center gap-2 rounded-xl border border-zinc-900 bg-zinc-900 px-4 py-2.5 text-sm font-bold uppercase tracking-[0.11em] text-white transition hover:-translate-y-0.5 hover:bg-black"
+                >
+                  Save Profile
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-8 grid gap-4 md:grid-cols-3">
+              <article className="dash-stat rounded-2xl border border-slate-300/70 bg-white/75 p-4 shadow-lg shadow-slate-200/60 backdrop-blur-md dark:border-slate-700/80 dark:bg-slate-900/70 dark:shadow-black/35">
+                <p className="text-xs uppercase tracking-[0.12em] text-slate-600 dark:text-slate-400">Completion</p>
+                <p className="mt-1 text-2xl font-semibold">{completionPercent}%</p>
+              </article>
+              <article className="dash-stat rounded-2xl border border-slate-300/70 bg-white/75 p-4 shadow-lg shadow-slate-200/60 backdrop-blur-md dark:border-slate-700/80 dark:bg-slate-900/70 dark:shadow-black/35">
+                <p className="text-xs uppercase tracking-[0.12em] text-slate-600 dark:text-slate-400">Primary Role</p>
+                <p className="mt-1 text-base font-semibold">{form.jobTitle || 'Add your current role'}</p>
+              </article>
+              <article className="dash-stat rounded-2xl border border-slate-300/70 bg-white/75 p-4 shadow-lg shadow-slate-200/60 backdrop-blur-md dark:border-slate-700/80 dark:bg-slate-900/70 dark:shadow-black/35">
+                <p className="text-xs uppercase tracking-[0.12em] text-slate-600 dark:text-slate-400">Profile Reach</p>
+                <p className="mt-1 text-base font-semibold">{form.websiteUrl || form.portfolioUrl || 'Add your main link'}</p>
+              </article>
             </div>
           </div>
 
-          {/* Profile Form Card */}
-          <div className="mt-6 rounded-2xl border border-slate-300/70 bg-white/75 p-6 shadow-xl shadow-slate-200/60 backdrop-blur-md dark:border-slate-700/80 dark:bg-slate-900/70 dark:shadow-black/35 md:p-8">
-            <form onSubmit={onSubmit} className="space-y-6">
-              {/* Avatar Section */}
-              <div className="rounded-xl border border-slate-200/80 bg-slate-50/50 p-5 dark:border-slate-700/60 dark:bg-slate-800/30">
+          <div className="mt-10 grid items-start gap-8 xl:grid-cols-[340px_minmax(0,1fr)]">
+            <aside className="dash-panel dashboard-reveal self-start rounded-3xl border border-slate-300/70 bg-white/75 p-6 shadow-xl shadow-slate-200/60 backdrop-blur-md dark:border-slate-700/80 dark:bg-slate-900/70 dark:shadow-black/35">
+              <p className="font-['Manrope',sans-serif] text-xs font-extrabold uppercase tracking-[0.18em] text-slate-600 dark:text-slate-300">
+                Profile Preview
+              </p>
+
+              <div className="mt-6 flex flex-col items-center text-center">
+                <div className="relative">
+                  <div className="h-28 w-28 overflow-hidden rounded-full border-4 border-white shadow-xl dark:border-slate-700">
+                    <img src={previewAvatarUrl} alt="User avatar" className="h-full w-full object-cover" />
+                  </div>
+                  {hasCustomAvatar && (
+                    <div className="absolute -bottom-1 -right-1 rounded-full bg-emerald-500 p-1.5 text-white shadow-lg">
+                      <svg className="h-3 w-3" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                      </svg>
+                    </div>
+                  )}
+                </div>
+
+                <h2 className="mt-5 text-2xl font-semibold text-slate-900 dark:text-slate-100">{form.name || 'Your name'}</h2>
+                <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{form.jobTitle || 'Role / position'}</p>
+                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{form.company || 'Company / organization'}</p>
+                <p className="mt-4 text-sm leading-6 text-slate-600 dark:text-slate-300">{form.bio || 'Your short collaborator bio will appear here.'}</p>
+              </div>
+
+              <div className="mt-6 grid gap-3">
+                <div className="rounded-2xl border border-slate-300/70 bg-slate-50/80 px-4 py-3 dark:border-slate-700 dark:bg-slate-950/45">
+                  <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500 dark:text-slate-400">Location</p>
+                  <p className="mt-1 text-sm text-slate-700 dark:text-slate-200">{form.location || 'Add your location'}</p>
+                </div>
+                <div className="rounded-2xl border border-slate-300/70 bg-slate-50/80 px-4 py-3 dark:border-slate-700 dark:bg-slate-950/45">
+                  <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500 dark:text-slate-400">Pronouns</p>
+                  <p className="mt-1 text-sm text-slate-700 dark:text-slate-200">{form.pronouns || 'Add pronouns'}</p>
+                </div>
+                <div className="rounded-2xl border border-slate-300/70 bg-slate-50/80 px-4 py-3 dark:border-slate-700 dark:bg-slate-950/45">
+                  <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500 dark:text-slate-400">Skills</p>
+                  <p className="mt-1 text-sm text-slate-700 dark:text-slate-200">{form.skills || 'React, Node.js, UI Systems'}</p>
+                </div>
+              </div>
+
+              <div className="mt-6 rounded-2xl border border-slate-300/70 bg-slate-50/80 p-4 dark:border-slate-700 dark:bg-slate-950/45">
                 <p className="font-['Manrope',sans-serif] text-[11px] font-extrabold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
-                  Profile Picture
+                  Profile Tips
                 </p>
-                <div className="mt-4 flex flex-col items-center gap-5 sm:flex-row">
-                  {/* Avatar Preview */}
-                  <div className="relative">
-                    <div className="h-24 w-24 overflow-hidden rounded-full border-4 border-white shadow-lg dark:border-slate-700">
-                      <img
-                        src={previewAvatarUrl}
-                        alt="User avatar"
-                        className="h-full w-full object-cover"
-                      />
-                    </div>
-                    {hasCustomAvatar && (
-                      <div className="absolute -bottom-1 -right-1 rounded-full bg-emerald-500 p-1">
-                        <svg className="h-3 w-3 text-white" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                        </svg>
-                      </div>
-                    )}
-                  </div>
+                <ul className="mt-3 list-disc space-y-1.5 pl-5 text-sm text-slate-600 dark:text-slate-300">
+                  <li>Your avatar, name, and role help teammates identify you quickly.</li>
+                  <li>Portfolio and social links make it easier to verify your work.</li>
+                  <li>Use skills and bio fields to add collaboration context.</li>
+                </ul>
+              </div>
+            </aside>
 
-                  {/* Upload Zone */}
-                  <div className="flex-1">
-                    <div
-                      onDragOver={onDragOver}
-                      onDragLeave={onDragLeave}
-                      onDrop={onDrop}
-                      onClick={() => fileInputRef.current?.click()}
-                      className={`cursor-pointer rounded-xl border-2 border-dashed p-4 text-center transition-all ${
-                        isDragging
-                          ? 'border-blue-500 bg-blue-50 dark:border-blue-400 dark:bg-blue-950/30'
-                          : 'border-slate-300 bg-white hover:border-slate-400 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800/50 dark:hover:border-slate-500 dark:hover:bg-slate-800'
-                      }`}
-                    >
-                      <input
-                        ref={fileInputRef}
-                        type="file"
-                        accept="image/*"
-                        onChange={onAvatarFileChange}
-                        className="hidden"
-                      />
-                      <div className="flex flex-col items-center gap-2">
-                        <div className={`rounded-full p-2 ${isDragging ? 'bg-blue-100 dark:bg-blue-900/50' : 'bg-slate-100 dark:bg-slate-700'}`}>
-                          <svg className={`h-5 w-5 ${isDragging ? 'text-blue-600 dark:text-blue-400' : 'text-slate-500 dark:text-slate-400'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                          </svg>
-                        </div>
-                        <div>
-                          <p className="text-sm font-medium text-slate-700 dark:text-slate-200">
-                            {isDragging ? 'Drop image here' : 'Click to upload or drag & drop'}
-                          </p>
-                          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                            PNG, JPG, GIF up to 5MB
-                          </p>
-                        </div>
-                      </div>
+            <div className="dash-panel dashboard-reveal rounded-3xl border border-slate-300/70 bg-white/75 p-6 shadow-xl shadow-slate-200/60 backdrop-blur-md dark:border-slate-700/80 dark:bg-slate-900/70 dark:shadow-black/35 md:p-8">
+              <form onSubmit={onSubmit} className="space-y-8">
+                <section className="rounded-2xl border border-slate-200/80 bg-slate-50/50 p-5 dark:border-slate-700/60 dark:bg-slate-800/30">
+                  <div className="flex flex-col gap-5 lg:flex-row lg:items-center">
+                    <div className="lg:w-56">
+                      <p className="font-['Manrope',sans-serif] text-[11px] font-extrabold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
+                        Profile Picture
+                      </p>
+                      <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
+                        Upload a clear avatar so you stay recognizable across dashboards and shared rooms.
+                      </p>
                     </div>
 
-                    {hasCustomAvatar && (
-                      <button
-                        type="button"
-                        onClick={onRemoveAvatar}
-                        className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 transition hover:bg-red-100 dark:border-red-800/60 dark:bg-red-950/30 dark:text-red-400 dark:hover:bg-red-950/50"
+                    <div className="flex-1">
+                      <div
+                        onDragOver={onDragOver}
+                        onDragLeave={onDragLeave}
+                        onDrop={onDrop}
+                        onClick={() => fileInputRef.current?.click()}
+                        className={`cursor-pointer rounded-2xl border-2 border-dashed p-5 text-center transition-all ${
+                          isDragging
+                            ? 'border-blue-500 bg-blue-50 dark:border-blue-400 dark:bg-blue-950/30'
+                            : 'border-slate-300 bg-white/90 hover:border-slate-400 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800/50 dark:hover:border-slate-500 dark:hover:bg-slate-800'
+                        }`}
                       >
-                        <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                        </svg>
-                        Remove Avatar
-                      </button>
-                    )}
+                        <input
+                          ref={fileInputRef}
+                          type="file"
+                          accept="image/*"
+                          onChange={onAvatarFileChange}
+                          className="hidden"
+                        />
+                        <div className="flex flex-col items-center gap-3">
+                          <div className={`rounded-full p-3 ${isDragging ? 'bg-blue-100 dark:bg-blue-900/50' : 'bg-slate-100 dark:bg-slate-700'}`}>
+                            <svg className={`h-6 w-6 ${isDragging ? 'text-blue-600 dark:text-blue-400' : 'text-slate-500 dark:text-slate-400'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                            </svg>
+                          </div>
+                          <div>
+                            <p className="text-sm font-medium text-slate-700 dark:text-slate-200">
+                              {isDragging ? 'Drop image here' : 'Click to upload or drag & drop'}
+                            </p>
+                            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">PNG, JPG, GIF up to 5MB</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {hasCustomAvatar && (
+                        <button
+                          type="button"
+                          onClick={onRemoveAvatar}
+                          className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 transition hover:bg-red-100 dark:border-red-800/60 dark:bg-red-950/30 dark:text-red-400 dark:hover:bg-red-950/50"
+                        >
+                          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                          Remove Avatar
+                        </button>
+                      )}
+                    </div>
                   </div>
-                </div>
-              </div>
+                </section>
 
-              {/* Form Fields */}
-              <div className="space-y-5">
-                {/* Name Field */}
-                <div>
-                  <label className="mb-2 block font-['Manrope',sans-serif] text-[11px] font-extrabold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
-                    Full Name *
-                  </label>
-                  <input
-                    type="text"
-                    value={form.name}
-                    onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))}
-                    required
-                    placeholder="Your display name"
-                    className="w-full rounded-xl border border-slate-300/80 bg-white px-4 py-3 text-sm text-slate-900 placeholder-slate-400 transition focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 dark:border-slate-600/80 dark:bg-slate-800/50 dark:text-slate-100 dark:placeholder-slate-500 dark:focus:border-slate-500 dark:focus:ring-slate-700"
-                  />
-                </div>
-
-                {/* Bio Field */}
-                <div>
-                  <label className="mb-2 block font-['Manrope',sans-serif] text-[11px] font-extrabold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
-                    Bio
-                  </label>
-                  <textarea
-                    value={form.bio}
-                    onChange={(event) => setForm((prev) => ({ ...prev, bio: event.target.value }))}
-                    placeholder="Tell teammates about yourself..."
-                    maxLength={300}
-                    rows={3}
-                    className="w-full resize-none rounded-xl border border-slate-300/80 bg-white px-4 py-3 text-sm text-slate-900 placeholder-slate-400 transition focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 dark:border-slate-600/80 dark:bg-slate-800/50 dark:text-slate-100 dark:placeholder-slate-500 dark:focus:border-slate-500 dark:focus:ring-slate-700"
-                  />
-                  <p className="mt-1 text-right text-xs text-slate-400 dark:text-slate-500">
-                    {form.bio.length}/300
-                  </p>
-                </div>
-
-                {/* Two Column Grid */}
-                <div className="grid gap-5 sm:grid-cols-2">
-                  {/* Pronouns Field */}
-                  <div>
-                    <label className="mb-2 block font-['Manrope',sans-serif] text-[11px] font-extrabold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
-                      Pronouns
-                    </label>
-                    <input
-                      type="text"
-                      value={form.pronouns}
-                      onChange={(event) => setForm((prev) => ({ ...prev, pronouns: event.target.value }))}
-                      placeholder="e.g., he/him, she/her"
-                      maxLength={60}
-                      className="w-full rounded-xl border border-slate-300/80 bg-white px-4 py-3 text-sm text-slate-900 placeholder-slate-400 transition focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 dark:border-slate-600/80 dark:bg-slate-800/50 dark:text-slate-100 dark:placeholder-slate-500 dark:focus:border-slate-500 dark:focus:ring-slate-700"
-                    />
+                <section>
+                  <div className="mb-5">
+                    <p className="font-['Manrope',sans-serif] text-xs font-extrabold uppercase tracking-[0.18em] text-slate-600 dark:text-slate-300">
+                      Identity
+                    </p>
+                    <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
+                      Core profile details shown across the editor and collaboration surfaces.
+                    </p>
                   </div>
 
-                  {/* Location Field */}
-                  <div>
-                    <label className="mb-2 block font-['Manrope',sans-serif] text-[11px] font-extrabold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
-                      Location
-                    </label>
-                    <input
-                      type="text"
-                      value={form.location}
-                      onChange={(event) => setForm((prev) => ({ ...prev, location: event.target.value }))}
-                      placeholder="City, Country"
-                      maxLength={120}
-                      className="w-full rounded-xl border border-slate-300/80 bg-white px-4 py-3 text-sm text-slate-900 placeholder-slate-400 transition focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 dark:border-slate-600/80 dark:bg-slate-800/50 dark:text-slate-100 dark:placeholder-slate-500 dark:focus:border-slate-500 dark:focus:ring-slate-700"
-                    />
+                  <div className="grid gap-5 md:grid-cols-2">
+                    {renderInput('Full Name *', 'name', {
+                      placeholder: 'Aarav Sharma',
+                      maxLength: 100,
+                      required: true,
+                    })}
+                    {renderInput('Role / Title', 'jobTitle', {
+                      placeholder: 'Frontend Engineer',
+                      maxLength: 100,
+                    })}
+                    {renderInput('Pronouns', 'pronouns', {
+                      placeholder: 'he/him, she/her, they/them',
+                      maxLength: 60,
+                    })}
+                    {renderInput('Location', 'location', {
+                      placeholder: 'Bengaluru, India',
+                      maxLength: 120,
+                    })}
+                    <div className="md:col-span-2">
+                      {renderInput('Company / Organization', 'company', {
+                        placeholder: 'Where you work, study, or build',
+                        maxLength: 100,
+                      })}
+                    </div>
+                    <div className="md:col-span-2">
+                      <label className="mb-2 block font-['Manrope',sans-serif] text-[11px] font-extrabold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
+                        Bio
+                      </label>
+                      <textarea
+                        value={form.bio}
+                        onChange={(event) => setForm((prev) => ({ ...prev, bio: event.target.value }))}
+                        placeholder="Tell teammates what you work on, what you enjoy building, and how you collaborate."
+                        maxLength={300}
+                        rows={4}
+                        className={`${fieldClassName} resize-none`}
+                      />
+                      <p className="mt-1 text-right text-xs text-slate-400 dark:text-slate-500">{form.bio.length}/300</p>
+                    </div>
                   </div>
-                </div>
+                </section>
 
-                {/* Company Field */}
-                <div>
-                  <label className="mb-2 block font-['Manrope',sans-serif] text-[11px] font-extrabold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
-                    Company / Organization
-                  </label>
-                  <input
-                    type="text"
-                    value={form.company}
-                    onChange={(event) => setForm((prev) => ({ ...prev, company: event.target.value }))}
-                    placeholder="Where you work or study"
-                    maxLength={100}
-                    className="w-full rounded-xl border border-slate-300/80 bg-white px-4 py-3 text-sm text-slate-900 placeholder-slate-400 transition focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 dark:border-slate-600/80 dark:bg-slate-800/50 dark:text-slate-100 dark:placeholder-slate-500 dark:focus:border-slate-500 dark:focus:ring-slate-700"
-                  />
-                </div>
-              </div>
-
-              {/* Messages */}
-              {error && (
-                <div className="rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-800/60 dark:bg-red-950/30">
-                  <div className="flex items-center gap-2">
-                    <svg className="h-5 w-5 text-red-600 dark:text-red-400" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-                    </svg>
-                    <p className="text-sm font-medium text-red-700 dark:text-red-400">{error}</p>
+                <section>
+                  <div className="mb-5">
+                    <p className="font-['Manrope',sans-serif] text-xs font-extrabold uppercase tracking-[0.18em] text-slate-600 dark:text-slate-300">
+                      Links & Presence
+                    </p>
+                    <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
+                      Add the main URLs teammates or recruiters would use to verify your work.
+                    </p>
                   </div>
-                </div>
-              )}
 
-              {success && (
-                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-800/60 dark:bg-emerald-950/30">
-                  <div className="flex items-center gap-2">
-                    <svg className="h-5 w-5 text-emerald-600 dark:text-emerald-400" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                    </svg>
-                    <p className="text-sm font-medium text-emerald-700 dark:text-emerald-400">{success}</p>
+                  <div className="grid gap-5 md:grid-cols-2">
+                    {renderInput('Website', 'websiteUrl', {
+                      type: 'url',
+                      placeholder: 'https://yourwebsite.com',
+                      maxLength: 200,
+                    })}
+                    {renderInput('Portfolio', 'portfolioUrl', {
+                      type: 'url',
+                      placeholder: 'https://portfolio.example.com',
+                      maxLength: 200,
+                    })}
+                    {renderInput('GitHub Profile', 'githubProfile', {
+                      type: 'url',
+                      placeholder: 'https://github.com/username',
+                      maxLength: 200,
+                    })}
+                    {renderInput('LinkedIn', 'linkedinUrl', {
+                      type: 'url',
+                      placeholder: 'https://linkedin.com/in/username',
+                      maxLength: 200,
+                    })}
+                    <div className="md:col-span-2">
+                      <label className="mb-2 block font-['Manrope',sans-serif] text-[11px] font-extrabold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
+                        Skills
+                      </label>
+                      <textarea
+                        value={form.skills}
+                        onChange={(event) => setForm((prev) => ({ ...prev, skills: event.target.value }))}
+                        placeholder="React, Node.js, TypeScript, UI systems, backend APIs"
+                        maxLength={200}
+                        rows={3}
+                        className={`${fieldClassName} resize-none`}
+                      />
+                      <p className="mt-1 text-right text-xs text-slate-400 dark:text-slate-500">{form.skills.length}/200</p>
+                    </div>
                   </div>
-                </div>
-              )}
+                </section>
 
-              {/* Submit Button */}
-              <button
-                type="submit"
-                disabled={saving}
-                className="w-full rounded-xl border border-zinc-900 bg-zinc-900 px-4 py-3 text-sm font-bold uppercase tracking-[0.11em] text-white transition hover:-translate-y-0.5 hover:bg-black disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-900 dark:bg-zinc-900 dark:text-white dark:hover:bg-black"
-              >
-                {saving ? (
-                  <span className="inline-flex items-center gap-2">
-                    <svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                    </svg>
-                    Saving...
-                  </span>
-                ) : (
-                  'Update Profile'
+                {error && (
+                  <div className="rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-800/60 dark:bg-red-950/30">
+                    <div className="flex items-center gap-2">
+                      <svg className="h-5 w-5 text-red-600 dark:text-red-400" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                      </svg>
+                      <p className="text-sm font-medium text-red-700 dark:text-red-400">{error}</p>
+                    </div>
+                  </div>
                 )}
-              </button>
-            </form>
-          </div>
 
-          {/* Tips Card */}
-          <div className="mt-6 rounded-xl border border-slate-300/70 bg-slate-50/80 p-5 dark:border-slate-700 dark:bg-slate-950/45">
-            <p className="font-['Manrope',sans-serif] text-[11px] font-extrabold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
-              Profile Tips
-            </p>
-            <ul className="mt-3 list-disc space-y-1.5 pl-5 text-sm text-slate-600 dark:text-slate-300">
-              <li>Your name and avatar appear in shared workspaces.</li>
-              <li>Bio helps teammates know you better during collaborations.</li>
-              <li>Keep your profile updated for a better experience.</li>
-            </ul>
+                {success && (
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-800/60 dark:bg-emerald-950/30">
+                    <div className="flex items-center gap-2">
+                      <svg className="h-5 w-5 text-emerald-600 dark:text-emerald-400" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                      </svg>
+                      <p className="text-sm font-medium text-emerald-700 dark:text-emerald-400">{success}</p>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex flex-col gap-3 border-t border-slate-200/80 pt-6 dark:border-slate-700/70 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-sm text-slate-600 dark:text-slate-300">
+                    Save after updating links, role, or collaboration details.
+                  </p>
+                  <button
+                    type="submit"
+                    disabled={saving}
+                    className="dash-primary-btn inline-flex items-center justify-center rounded-xl border border-zinc-900 bg-zinc-900 px-5 py-3 text-sm font-bold uppercase tracking-[0.11em] text-white transition hover:-translate-y-0.5 hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {saving ? (
+                      <span className="inline-flex items-center gap-2">
+                        <svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                        </svg>
+                        Saving...
+                      </span>
+                    ) : (
+                      'Update Profile'
+                    )}
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
         </div>
 
-        {/* Confirmation Modal */}
         {showConfirm && (
           <div
             className="fixed inset-0 z-[80] grid place-items-center bg-slate-950/45 px-4 backdrop-blur-sm"
@@ -456,9 +569,7 @@ const ProfilePage = () => {
                 </div>
                 <h3 className="text-lg font-semibold">Confirm Changes</h3>
               </div>
-              <p className="text-sm text-slate-600 dark:text-slate-300">
-                Are you sure you want to save these profile changes?
-              </p>
+              <p className="text-sm text-slate-600 dark:text-slate-300">Are you sure you want to save these profile changes?</p>
               <div className="mt-6 flex justify-end gap-3">
                 <button
                   type="button"
@@ -470,7 +581,7 @@ const ProfilePage = () => {
                 <button
                   type="button"
                   onClick={confirmSave}
-                  className="rounded-lg border border-zinc-900 bg-zinc-900 px-4 py-2.5 text-xs font-bold uppercase tracking-[0.08em] text-white transition hover:bg-black dark:border-zinc-900 dark:bg-zinc-900 dark:text-white dark:hover:bg-black"
+                  className="rounded-lg border border-zinc-900 bg-zinc-900 px-4 py-2.5 text-xs font-bold uppercase tracking-[0.08em] text-white transition hover:bg-black"
                 >
                   Yes, Save Changes
                 </button>

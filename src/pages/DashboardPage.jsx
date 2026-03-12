@@ -403,12 +403,12 @@ const DashboardPage = () => {
       {project.role === 'owner' && (
         <button
           type="button"
-          className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300/70 bg-white/80 text-slate-700 transition hover:-translate-y-0.5 hover:bg-white dark:border-slate-700/80 dark:bg-slate-900/70 dark:text-slate-200 dark:hover:bg-slate-800"
+          className="project-action-btn inline-flex h-11 w-11 items-center justify-center rounded-xl border border-slate-300/70 bg-white/80 text-slate-700 transition hover:-translate-y-0.5 hover:bg-white dark:border-slate-700/80 dark:bg-slate-900/70 dark:text-slate-200 dark:hover:bg-slate-800"
           title={githubStatus.connected ? `Upload ${project.name} to GitHub` : 'Connect GitHub to upload projects'}
           aria-label={githubStatus.connected ? `Upload ${project.name} to GitHub` : 'Connect GitHub to upload projects'}
           onClick={() => openGithubUploadDialog(project)}
         >
-          <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" className="h-4 w-4">
+          <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" className="h-5 w-5">
             <path
               fill="currentColor"
               d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.01.08-2.1 0 0 .67-.21 2.2.82a7.56 7.56 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.09.16 1.9.08 2.1.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"
@@ -419,7 +419,7 @@ const DashboardPage = () => {
       {project.canEdit && (
         <button
           type="button"
-          className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300/70 bg-white/80 text-slate-700 transition hover:-translate-y-0.5 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700/80 dark:bg-slate-900/70 dark:text-slate-200 dark:hover:bg-slate-800"
+          className="project-action-btn inline-flex h-11 w-11 items-center justify-center rounded-xl border border-slate-300/70 bg-white/80 text-slate-700 transition hover:-translate-y-0.5 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700/80 dark:bg-slate-900/70 dark:text-slate-200 dark:hover:bg-slate-800"
           title={`Download ${project.name} as ZIP`}
           aria-label={`Download ${project.name} as ZIP`}
           onClick={() => downloadProjectZip(project)}
@@ -428,7 +428,7 @@ const DashboardPage = () => {
           {downloadingProjectId === project.id ? (
             <span className="text-xs">...</span>
           ) : (
-            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" className="h-4 w-4">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" className="h-5 w-5">
               <path
                 fill="currentColor"
                 d="M12 3a1 1 0 0 1 1 1v9.59l2.3-2.29a1 1 0 1 1 1.4 1.42l-4 3.97a1 1 0 0 1-1.4 0l-4-3.97a1 1 0 1 1 1.4-1.42L11 13.59V4a1 1 0 0 1 1-1Zm-7 15a1 1 0 0 1 1 1v1h12v-1a1 1 0 1 1 2 0v2a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1Z"
@@ -440,12 +440,12 @@ const DashboardPage = () => {
       {project.role === 'owner' && (
         <button
           type="button"
-          className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-red-300/70 bg-red-50/80 text-red-700 transition hover:-translate-y-0.5 hover:bg-red-100 dark:border-red-700/60 dark:bg-red-950/40 dark:text-red-300 dark:hover:bg-red-900/50"
+          className="project-action-btn inline-flex h-11 w-11 items-center justify-center rounded-xl border border-red-300/70 bg-red-50/80 text-red-700 transition hover:-translate-y-0.5 hover:bg-red-100 dark:border-red-700/60 dark:bg-red-950/40 dark:text-red-300 dark:hover:bg-red-900/50"
           title={`Delete ${project.name}`}
           aria-label={`Delete ${project.name}`}
           onClick={() => setProjectToDelete(project)}
         >
-          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" className="h-4 w-4">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" className="h-5 w-5">
             <path
               fill="currentColor"
               d="M9 3a1 1 0 0 0-1 1v1H5a1 1 0 1 0 0 2h1v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7h1a1 1 0 1 0 0-2h-3V4a1 1 0 0 0-1-1H9Zm1 2h4v1h-4V5Zm-2 4a1 1 0 0 1 1 1v8a1 1 0 1 1-2 0v-8a1 1 0 0 1 1-1Zm8 0a1 1 0 0 1 1 1v8a1 1 0 1 1-2 0v-8a1 1 0 0 1 1-1Zm-4 0a1 1 0 0 1 1 1v8a1 1 0 1 1-2 0v-8a1 1 0 0 1 1-1Z"
@@ -482,7 +482,7 @@ const DashboardPage = () => {
   return (
     <>
       <Navbar variant="app" />
-      <section className="dashboard-modern -m-4 min-h-screen overflow-hidden bg-[radial-gradient(circle_at_12%_8%,rgba(148,163,184,0.24),transparent_34%),linear-gradient(170deg,#f8fafc_0%,#ffffff_52%,#eef2f7_100%)] px-4 pb-16 pt-24 font-['Questrial',sans-serif] text-slate-900 antialiased dark:bg-[radial-gradient(circle_at_12%_8%,rgba(59,130,246,0.18),transparent_34%),linear-gradient(170deg,#01030a_0%,#020611_55%,#00030c_100%)] dark:text-slate-100 md:px-6">
+      <section className="dashboard-modern dashboard-surface -m-4 min-h-screen overflow-hidden bg-[radial-gradient(circle_at_12%_8%,rgba(148,163,184,0.24),transparent_34%),linear-gradient(170deg,#f8fafc_0%,#ffffff_52%,#eef2f7_100%)] px-4 pb-16 pt-24 font-['Questrial',sans-serif] text-slate-900 antialiased dark:bg-[radial-gradient(circle_at_12%_8%,rgba(59,130,246,0.18),transparent_34%),linear-gradient(170deg,#01030a_0%,#020611_55%,#00030c_100%)] dark:text-slate-100 md:px-6">
         <div className="mx-auto max-w-7xl">
           <div className="dash-hero dashboard-reveal relative overflow-hidden rounded-3xl border border-slate-300/60 bg-[radial-gradient(circle_at_8%_12%,rgba(148,163,184,0.2),transparent_35%),radial-gradient(circle_at_90%_0%,rgba(148,163,184,0.2),transparent_40%),linear-gradient(165deg,#f8fafc_0%,#ffffff_53%,#f1f5f9_100%)] p-6 shadow-xl shadow-slate-300/35 dark:border-slate-700/70 dark:bg-[radial-gradient(circle_at_8%_12%,rgba(148,163,184,0.12),transparent_35%),radial-gradient(circle_at_90%_0%,rgba(71,85,105,0.16),transparent_40%),linear-gradient(165deg,#03060d_0%,#06080e_58%,#020308_100%)] dark:shadow-black/45 md:p-8">
             <p className="font-['Manrope',sans-serif] text-xs font-extrabold uppercase tracking-[0.2em] text-slate-600 dark:text-slate-300">

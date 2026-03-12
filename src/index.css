@@ -349,52 +349,19 @@ label {
 }
 
 .dashboard-modern::before {
-  content: '';
-  position: absolute;
-  inset: -30% -45%;
-  z-index: -1;
-  background: linear-gradient(
-    115deg,
-    transparent 16%,
-    rgba(148, 163, 184, 0.14) 33%,
-    rgba(255, 255, 255, 0.42) 47%,
-    rgba(148, 163, 184, 0.18) 58%,
-    transparent 76%
-  );
-  animation: dashboardShimmer 16s linear infinite;
-  pointer-events: none;
+  content: none;
 }
 
 .dark .dashboard-modern::before {
-  background: linear-gradient(
-    115deg,
-    transparent 16%,
-    rgba(56, 189, 248, 0.12) 35%,
-    rgba(30, 64, 175, 0.24) 50%,
-    rgba(37, 99, 235, 0.14) 63%,
-    transparent 80%
-  );
+  content: none;
 }
 
 .dashboard-modern::after {
-  content: '';
-  position: absolute;
-  inset: -20% -25%;
-  z-index: -1;
-  pointer-events: none;
-  background:
-    radial-gradient(circle at 18% 18%, rgba(255, 255, 255, 0.18), transparent 40%),
-    radial-gradient(circle at 82% 15%, rgba(148, 163, 184, 0.2), transparent 42%),
-    radial-gradient(circle at 55% 86%, rgba(203, 213, 225, 0.16), transparent 45%);
-  filter: blur(6px);
-  animation: dashboardAmbient 18s ease-in-out infinite alternate;
+  content: none;
 }
 
 .dark .dashboard-modern::after {
-  background:
-    radial-gradient(circle at 18% 18%, rgba(30, 64, 175, 0.2), transparent 42%),
-    radial-gradient(circle at 82% 15%, rgba(14, 116, 144, 0.18), transparent 44%),
-    radial-gradient(circle at 55% 86%, rgba(15, 23, 42, 0.32), transparent 48%);
+  content: none;
 }
 
 .dashboard-reveal {
@@ -460,24 +427,20 @@ label {
   color: #e2e8f0;
 }
 
-@keyframes dashboardShimmer {
-  0% {
-    transform: translate3d(-18%, -2%, 0) rotate(0.001deg);
-  }
-  100% {
-    transform: translate3d(18%, 2%, 0) rotate(0.001deg);
-  }
+.profile-modern .profile-hero {
+  backdrop-filter: blur(18px);
 }
 
-@keyframes dashboardAmbient {
-  0% {
-    transform: translate3d(-2%, 0, 0) scale(1);
-    opacity: 0.72;
-  }
-  100% {
-    transform: translate3d(2%, -1.5%, 0) scale(1.04);
-    opacity: 1;
-  }
+.project-action-btn {
+  box-shadow: 0 12px 26px rgba(15, 23, 42, 0.12);
+}
+
+.project-action-btn svg {
+  flex-shrink: 0;
+}
+
+.dark .project-action-btn {
+  box-shadow: 0 14px 28px rgba(2, 6, 23, 0.26);
 }
 
 @keyframes dashboardReveal {
@@ -2045,11 +2008,17 @@ body.ai-panel-resizing {
 .practice-mode {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: calc(100vh - 2rem);
   width: 100%;
-  background: linear-gradient(135deg, #0a0f1a 0%, #0d1526 50%, #0f1a2e 100%);
+  gap: 1rem;
+  padding: 1rem;
+  background:
+    radial-gradient(circle at top, rgba(59, 130, 246, 0.18), transparent 30%),
+    radial-gradient(circle at bottom right, rgba(14, 165, 233, 0.08), transparent 26%),
+    linear-gradient(145deg, #050b18 0%, #091224 52%, #0d1830 100%);
   font-family: 'Questrial', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
   overflow: hidden;
+  max-width: 100%;
 }
 
 /* --- Practice Header --- */
@@ -2057,94 +2026,105 @@ body.ai-panel-resizing {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.85rem 1.5rem;
-  background: rgba(15, 23, 42, 0.95);
-  backdrop-filter: blur(12px);
-  border-bottom: 1px solid rgba(59, 130, 246, 0.2);
-  box-shadow: 0 2px 16px rgba(0, 0, 0, 0.3);
+  padding: 0.8rem 1.05rem;
+  background:
+    linear-gradient(135deg, rgba(8, 20, 46, 0.96) 0%, rgba(10, 27, 59, 0.94) 100%);
+  backdrop-filter: blur(18px);
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  border-radius: 22px;
+  box-shadow:
+    0 22px 48px rgba(2, 6, 23, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
   z-index: 10;
   position: relative;
+  overflow: hidden;
+}
+
+.practice-header::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 12% 18%, rgba(59, 130, 246, 0.2), transparent 24%),
+    linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.04), transparent);
 }
 
 .practice-header-left {
   display: flex;
   align-items: center;
-  gap: 1rem;
+  gap: 0.8rem;
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  flex-wrap: wrap;
 }
 
 .practice-header h2 {
   margin: 0;
-  font-size: 1.3rem;
-  font-weight: 600;
-  color: #f1f5f9;
+  font-size: 1.18rem;
+  font-weight: 700;
+  color: #f8fbff;
   font-family: 'Manrope', 'Inter', sans-serif;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.01em;
 }
 
 .practice-header .role-note {
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   font-weight: 700;
-  color: #94a3b8;
+  color: #bfdbfe;
   text-transform: uppercase;
   letter-spacing: 0.12em;
-  padding: 0.3rem 0.7rem;
-  background: rgba(59, 130, 246, 0.15);
-  border: 1px solid rgba(59, 130, 246, 0.3);
-  border-radius: 20px;
-}
-
-.practice-header-logo {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.practice-header-logo img {
-  height: 130px;
-  width: auto;
-  object-fit: contain;
+  padding: 0.34rem 0.72rem;
+  background: rgba(37, 99, 235, 0.1);
+  border: 1px solid rgba(96, 165, 250, 0.22);
+  border-radius: 999px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
 .practice-header-actions {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: 0.6rem;
+  position: relative;
+  z-index: 1;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .practice-header button {
-  padding: 0.55rem 1.2rem;
-  border-radius: 25px;
-  font-size: 0.78rem;
+  padding: 0.58rem 1rem;
+  border-radius: 999px;
+  font-size: 0.73rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   cursor: pointer;
-  transition: all 0.2s ease;
-  border: 1px solid rgba(148, 163, 184, 0.3);
-  background: rgba(30, 41, 59, 0.8);
-  color: #e2e8f0;
+  transition: all 0.2s ease, box-shadow 0.25s ease;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: linear-gradient(180deg, rgba(30, 41, 59, 0.82), rgba(15, 23, 42, 0.82));
+  color: #d6e3f3;
+  box-shadow: 0 8px 18px rgba(2, 6, 23, 0.2);
 }
 
 .practice-header button:hover {
-  background: rgba(51, 65, 85, 0.9);
-  border-color: rgba(148, 163, 184, 0.5);
+  background: linear-gradient(180deg, rgba(51, 65, 85, 0.88), rgba(19, 31, 55, 0.86));
+  border-color: rgba(148, 163, 184, 0.28);
   transform: translateY(-1px);
+  box-shadow: 0 10px 22px rgba(2, 6, 23, 0.24);
 }
 
 .practice-header button.run-btn {
-  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-  border: 1px solid #059669;
+  background: linear-gradient(135deg, #0f9f72 0%, #109a8e 100%);
+  border: 1px solid rgba(52, 211, 153, 0.55);
   color: white;
-  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
+  box-shadow: 0 10px 22px rgba(16, 185, 129, 0.2);
 }
 
 .practice-header button.run-btn:hover {
-  background: linear-gradient(135deg, #059669 0%, #047857 100%);
-  box-shadow: 0 4px 14px rgba(16, 185, 129, 0.4);
-  transform: translateY(-2px);
+  background: linear-gradient(135deg, #108764 0%, #0f847e 100%);
+  box-shadow: 0 12px 24px rgba(16, 185, 129, 0.24);
+  transform: translateY(-1px);
 }
 
 .practice-header button.run-btn:disabled {
@@ -2159,15 +2139,16 @@ body.ai-panel-resizing {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.45rem 1rem;
-  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-  border: 1px solid #2563eb;
-  border-radius: 20px;
+  padding: 0.56rem 0.94rem;
+  background: linear-gradient(135deg, #2f6ed7 0%, #2456b8 100%);
+  border: 1px solid rgba(96, 165, 250, 0.4);
+  border-radius: 999px;
   color: white;
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.08em;
+  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.18);
 }
 
 /* --- Practice Main Layout (50-50 Split) --- */
@@ -2175,100 +2156,120 @@ body.ai-panel-resizing {
   flex: 1;
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 0;
+  gap: 1rem;
   overflow: hidden;
-  height: calc(100vh - 60px);
+  min-height: 0;
+  max-width: 100%;
 }
 
 /* --- Editor Panel (Left Side) --- */
 .practice-editor {
   display: flex;
   flex-direction: column;
-  height: 100%;
-  background: #1e293b;
-  border-right: 1px solid rgba(59, 130, 246, 0.15);
+  min-height: 0;
+  min-width: 0;
+  background: linear-gradient(180deg, rgba(6, 18, 45, 0.94), rgba(7, 16, 37, 0.98));
+  border: 1px solid rgba(59, 130, 246, 0.16);
+  border-radius: 30px;
   overflow: hidden;
+  box-shadow:
+    0 24px 56px rgba(2, 6, 23, 0.42),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .practice-editor-controls {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.65rem 1rem;
-  background: rgba(15, 23, 42, 0.95);
-  border-bottom: 1px solid rgba(59, 130, 246, 0.2);
-  gap: 0.75rem;
+  padding: 0.8rem 0.95rem;
+  background:
+    linear-gradient(180deg, rgba(9, 22, 49, 0.98), rgba(8, 20, 43, 0.92));
+  border-bottom: 1px solid rgba(59, 130, 246, 0.18);
+  gap: 0.9rem;
   flex-wrap: wrap;
+  min-width: 0;
 }
 
 .file-selector {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: 0.65rem;
   flex: 1;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
 .file-selector label {
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   font-weight: 700;
-  color: #94a3b8;
+  color: #9fb6d9;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.12em;
   margin: 0;
 }
 
 .file-selector select {
   width: auto;
-  min-width: 180px;
-  padding: 0.45rem 0.75rem;
-  background: rgba(30, 41, 59, 0.9);
-  border: 1px solid rgba(59, 130, 246, 0.3);
-  border-radius: 8px;
+  flex: 0 1 240px;
+  min-width: 170px;
+  max-width: 240px;
+  padding: 0.64rem 0.82rem;
+  background: linear-gradient(180deg, rgba(31, 46, 74, 0.95), rgba(17, 28, 48, 0.95));
+  border: 1px solid rgba(96, 165, 250, 0.25);
+  border-radius: 12px;
   color: #f1f5f9;
-  font-size: 0.85rem;
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
-  transition: all 0.2s ease;
+  font-size: 0.82rem;
+  font-family: 'Manrope', 'Inter', sans-serif;
+  font-weight: 600;
+  transition: all 0.2s ease, box-shadow 0.2s ease;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.file-selector select option {
+  background: #0f1b34;
+  color: #e8f1ff;
 }
 
 .file-selector select:hover {
-  border-color: rgba(59, 130, 246, 0.5);
-  background: rgba(30, 41, 59, 1);
+  border-color: rgba(96, 165, 250, 0.42);
 }
 
 .file-selector select:focus {
   outline: none;
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+  border-color: #60a5fa;
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.14);
 }
 
 .file-selector button {
-  padding: 0.45rem 0.85rem;
-  font-size: 0.78rem;
-  font-weight: 600;
-  background: rgba(59, 130, 246, 0.15);
-  border: 1px solid rgba(59, 130, 246, 0.4);
-  color: #60a5fa;
-  border-radius: 6px;
+  padding: 0.62rem 0.82rem;
+  font-size: 0.74rem;
+  font-weight: 700;
+  background: linear-gradient(180deg, rgba(30, 64, 175, 0.12), rgba(15, 23, 42, 0.52));
+  border: 1px solid rgba(59, 130, 246, 0.28);
+  color: #bfdbfe;
+  border-radius: 12px;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all 0.18s ease;
 }
 
 .file-selector button:hover {
-  background: rgba(59, 130, 246, 0.25);
-  border-color: #3b82f6;
+  background: linear-gradient(180deg, rgba(37, 99, 235, 0.18), rgba(15, 23, 42, 0.66));
+  border-color: rgba(96, 165, 250, 0.38);
   transform: translateY(-1px);
 }
 
 .file-selector input {
-  padding: 0.45rem 0.75rem;
-  background: rgba(30, 41, 59, 0.9);
-  border: 1px solid rgba(59, 130, 246, 0.3);
-  border-radius: 8px;
+  flex: 0 1 220px;
+  padding: 0.68rem 0.82rem;
+  background: linear-gradient(180deg, rgba(17, 30, 53, 0.94), rgba(11, 19, 36, 0.98));
+  border: 1px solid rgba(96, 165, 250, 0.22);
+  border-radius: 12px;
   color: #f1f5f9;
-  font-size: 0.85rem;
+  font-size: 0.82rem;
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
   transition: all 0.2s ease;
   min-width: 150px;
+  max-width: 220px;
 }
 
 .file-selector input:hover {
@@ -2278,12 +2279,116 @@ body.ai-panel-resizing {
 
 .file-selector input:focus {
   outline: none;
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+  border-color: #60a5fa;
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.12);
 }
 
 .file-selector input::placeholder {
-  color: #64748b;
+  color: #5f759b;
+}
+
+.practice-file-toolbar {
+  justify-content: flex-start;
+}
+
+.practice-file-tabs {
+  display: flex;
+  gap: 0.55rem;
+  padding: 0 0.95rem 0.8rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  background: linear-gradient(180deg, rgba(8, 20, 43, 0.92), rgba(7, 18, 39, 0.78));
+  border-bottom: 1px solid rgba(59, 130, 246, 0.12);
+  max-width: 100%;
+  scrollbar-width: thin;
+}
+
+.practice-file-tab {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.32rem;
+  max-width: 180px;
+  border-radius: 11px;
+  border: 1px solid rgba(96, 165, 250, 0.16);
+  background: rgba(15, 23, 42, 0.56);
+  padding: 0.18rem;
+  box-shadow: none;
+}
+
+.practice-file-tab-open,
+.practice-file-tab-delete {
+  box-shadow: none;
+}
+
+.practice-file-tab-open {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 132px;
+  padding: 0.38rem 0.5rem;
+  border: 0;
+  background: transparent;
+  color: #9eb5d6;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.practice-file-tab-delete {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #86a6cf;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.practice-file-tab-delete svg {
+  width: 14px;
+  height: 14px;
+}
+
+.practice-file-tab-open span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.practice-file-tab:hover {
+  border-color: rgba(96, 165, 250, 0.32);
+  background: rgba(30, 41, 59, 0.72);
+}
+
+.practice-file-tab-delete:hover {
+  background: rgba(239, 68, 68, 0.18);
+  color: #fecaca;
+}
+
+.practice-file-tab.active {
+  border-color: rgba(96, 165, 250, 0.42);
+  background: linear-gradient(180deg, rgba(37, 99, 235, 0.28), rgba(15, 23, 42, 0.82));
+}
+
+.practice-file-tab.active .practice-file-tab-open {
+  color: #eff6ff;
+}
+
+.practice-file-tab.active .practice-file-tab-delete {
+  color: #dbeafe;
+}
+
+.practice-inline-form-row {
+  padding-top: 0.72rem;
+  padding-bottom: 0.72rem;
+  background: rgba(7, 17, 36, 0.72);
+}
+
+.practice-file-form {
+  align-items: center;
 }
 
 .run-controls {
@@ -2329,60 +2434,69 @@ body.ai-panel-resizing {
 .practice-console {
   display: flex;
   flex-direction: column;
-  height: 100%;
-  background: rgba(15, 23, 42, 0.95);
-  border-left: 1px solid rgba(59, 130, 246, 0.15);
+  min-height: 0;
+  min-width: 0;
+  background: linear-gradient(180deg, rgba(10, 21, 45, 0.96), rgba(6, 16, 36, 0.98));
+  border: 1px solid rgba(59, 130, 246, 0.16);
+  border-radius: 30px;
   overflow: hidden;
+  box-shadow:
+    0 24px 56px rgba(2, 6, 23, 0.42),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .practice-console-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.75rem 1rem;
-  background: rgba(30, 41, 59, 0.8);
-  border-bottom: 1px solid rgba(59, 130, 246, 0.2);
+  padding: 1rem 1.2rem;
+  background: linear-gradient(180deg, rgba(28, 43, 69, 0.72), rgba(17, 29, 50, 0.82));
+  border-bottom: 1px solid rgba(59, 130, 246, 0.18);
 }
 
 .practice-console h4 {
   margin: 0;
-  font-size: 0.85rem;
+  font-size: 1rem;
   font-weight: 700;
-  color: #e2e8f0;
+  color: #f1f5f9;
   font-family: 'Manrope', 'Inter', sans-serif;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.12em;
 }
 
 /* --- STDIN Box (Non-expandable) --- */
 .stdin-box {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  padding: 0.85rem 1rem;
-  background: rgba(30, 41, 59, 0.5);
-  border-bottom: 1px solid rgba(59, 130, 246, 0.15);
+  gap: 0.65rem;
+  margin: 1rem;
+  margin-bottom: 0.85rem;
+  padding: 1rem;
+  background: linear-gradient(180deg, rgba(19, 34, 62, 0.72), rgba(9, 20, 40, 0.78));
+  border: 1px solid rgba(59, 130, 246, 0.16);
+  border-radius: 22px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
 .stdin-box label {
-  font-size: 0.72rem;
+  font-size: 0.74rem;
   font-weight: 700;
-  color: #94a3b8;
+  color: #9fb6d9;
   text-transform: uppercase;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.14em;
   font-family: 'Manrope', sans-serif;
 }
 
 .stdin-box textarea {
   width: 100%;
-  height: 100px;
-  min-height: 100px;
-  max-height: 100px;
-  border: 1px solid rgba(148, 163, 184, 0.4);
-  background: #0f172a;
+  height: 112px;
+  min-height: 112px;
+  max-height: 112px;
+  border: 1px solid rgba(96, 165, 250, 0.18);
+  background: linear-gradient(180deg, #071327 0%, #09182f 100%);
   color: #e2e8f0;
-  border-radius: 8px;
-  padding: 0.75rem 1rem;
+  border-radius: 18px;
+  padding: 1rem 1.05rem;
   resize: none;
   font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
   font-size: 0.85rem;
@@ -2391,17 +2505,17 @@ body.ai-panel-resizing {
 }
 
 .stdin-box textarea:hover {
-  border-color: rgba(59, 130, 246, 0.5);
+  border-color: rgba(96, 165, 250, 0.34);
 }
 
 .stdin-box textarea:focus {
   outline: none;
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+  border-color: #60a5fa;
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.12);
 }
 
 .stdin-box textarea::placeholder {
-  color: #64748b;
+  color: #6079a0;
 }
 
 /* --- Output Section (Interactive Console) --- */
@@ -2410,39 +2524,47 @@ body.ai-panel-resizing {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  min-height: 0;
+  min-width: 0;
+  margin: 0 1rem 1rem;
+  border: 1px solid rgba(59, 130, 246, 0.14);
+  border-radius: 24px;
+  background: linear-gradient(180deg, rgba(7, 16, 36, 0.74), rgba(4, 13, 31, 0.96));
 }
 
 .practice-output-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.65rem 1rem;
-  background: rgba(30, 41, 59, 0.6);
+  padding: 0.95rem 1.15rem;
+  background: linear-gradient(180deg, rgba(22, 39, 69, 0.68), rgba(9, 19, 40, 0.8));
   border-bottom: 1px solid rgba(59, 130, 246, 0.15);
 }
 
 .practice-output-header h5 {
   margin: 0;
-  font-size: 0.72rem;
+  font-size: 0.76rem;
   font-weight: 700;
-  color: #94a3b8;
+  color: #afc4e4;
   text-transform: uppercase;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.16em;
 }
 
 .practice-console .terminal-console {
   flex: 1;
-  border-radius: 0;
+  min-height: 0;
+  border-radius: 0 0 24px 24px;
   border: none;
-  background: #0f172a;
+  background: linear-gradient(180deg, #051226 0%, #07192f 100%);
 }
 
 /* --- Error Text --- */
 .practice-console .error-text {
-  margin: 0;
-  padding: 0.75rem 1rem;
-  background: rgba(239, 68, 68, 0.15);
-  border-bottom: 1px solid rgba(239, 68, 68, 0.3);
+  margin: 0 1rem 0.85rem;
+  padding: 0.85rem 1rem;
+  background: rgba(239, 68, 68, 0.14);
+  border: 1px solid rgba(239, 68, 68, 0.28);
+  border-radius: 18px;
   color: #fca5a5;
   font-size: 0.85rem;
   font-weight: 500;
@@ -2507,39 +2629,47 @@ body.ai-panel-resizing {
 @media (max-width: 1024px) {
   .practice-layout {
     grid-template-columns: 1fr;
-    grid-template-rows: 1fr 1fr;
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
   }
   
   .practice-editor {
-    border-right: none;
-    border-bottom: 1px solid rgba(59, 130, 246, 0.15);
+    min-height: 420px;
   }
-  
+
   .practice-console {
-    border-left: none;
+    min-height: 420px;
   }
   
   .practice-header {
     flex-wrap: wrap;
-    gap: 0.75rem;
-    padding: 0.75rem 1rem;
+    gap: 1rem;
+    padding: 1rem 1.1rem;
+    justify-content: center;
   }
   
   .practice-header-left {
     flex-wrap: wrap;
-    gap: 0.5rem;
+    justify-content: center;
+    gap: 0.65rem;
   }
   
   .practice-header h2 {
-    font-size: 1.1rem;
+    font-size: 1.2rem;
   }
   
-  .practice-header-logo {
-    display: none;
+  .practice-header-actions {
+    justify-content: center;
+    flex-wrap: wrap;
   }
 }
 
 @media (max-width: 768px) {
+  .practice-mode {
+    height: calc(100vh - 1.4rem);
+    padding: 0.7rem;
+    gap: 0.7rem;
+  }
+
   .practice-header h2 {
     font-size: 1rem;
   }
@@ -2549,13 +2679,21 @@ body.ai-panel-resizing {
   }
   
   .file-selector select {
-    min-width: 140px;
+    min-width: 100%;
+    max-width: 100%;
+    flex-basis: 100%;
+  }
+
+  .file-selector input {
+    min-width: 100%;
+    max-width: 100%;
+    flex-basis: 100%;
   }
   
   .stdin-box textarea {
-    height: 80px;
-    min-height: 80px;
-    max-height: 80px;
+    height: 90px;
+    min-height: 90px;
+    max-height: 90px;
   }
 }
 
