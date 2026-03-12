@@ -44,6 +44,12 @@ CREATE TABLE collab_users (
   pronouns TEXT,
   company TEXT,
   location TEXT,
+  job_title TEXT,
+  website_url TEXT,
+  github_profile TEXT,
+  linkedin_url TEXT,
+  portfolio_url TEXT,
+  skills TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   last_active_at TIMESTAMPTZ DEFAULT NOW()

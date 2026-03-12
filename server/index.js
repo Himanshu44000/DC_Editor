@@ -3172,10 +3172,11 @@ const persistUser = async (user) => {
   await dbClient.query(
     `INSERT INTO collab_users (
        id, clerk_id, email, name, avatar_url, bio, pronouns, company, location,
+       job_title, website_url, github_profile, linkedin_url, portfolio_url, skills,
        github_username, github_access_token, github_token_scope, github_connected_at,
        updated_at, last_active_at
      )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, NOW(), NOW())
      ON CONFLICT (id) DO UPDATE SET
        clerk_id = EXCLUDED.clerk_id,
        email = EXCLUDED.email,
@@ -3185,6 +3186,12 @@ const persistUser = async (user) => {
        pronouns = EXCLUDED.pronouns,
        company = EXCLUDED.company,
        location = EXCLUDED.location,
+       job_title = EXCLUDED.job_title,
+       website_url = EXCLUDED.website_url,
+       github_profile = EXCLUDED.github_profile,
+       linkedin_url = EXCLUDED.linkedin_url,
+       portfolio_url = EXCLUDED.portfolio_url,
+       skills = EXCLUDED.skills,
        github_username = EXCLUDED.github_username,
        github_access_token = EXCLUDED.github_access_token,
        github_token_scope = EXCLUDED.github_token_scope,
@@ -3201,6 +3208,12 @@ const persistUser = async (user) => {
       String(user.pronouns || ''),
       String(user.company || ''),
       String(user.location || ''),
+      String(user.jobTitle || ''),
+      String(user.websiteUrl || ''),
+      String(user.githubProfile || ''),
+      String(user.linkedinUrl || ''),
+      String(user.portfolioUrl || ''),
+      String(user.skills || ''),
       String(user.githubUsername || ''),
       String(user.githubAccessToken || ''),
       String(user.githubTokenScope || ''),
@@ -3895,6 +3908,12 @@ const initDb = async () => {
   await dbClient.query('ALTER TABLE collab_users ADD COLUMN IF NOT EXISTS pronouns TEXT')
   await dbClient.query('ALTER TABLE collab_users ADD COLUMN IF NOT EXISTS company TEXT')
   await dbClient.query('ALTER TABLE collab_users ADD COLUMN IF NOT EXISTS location TEXT')
+  await dbClient.query('ALTER TABLE collab_users ADD COLUMN IF NOT EXISTS job_title TEXT')
+  await dbClient.query('ALTER TABLE collab_users ADD COLUMN IF NOT EXISTS website_url TEXT')
+  await dbClient.query('ALTER TABLE collab_users ADD COLUMN IF NOT EXISTS github_profile TEXT')
+  await dbClient.query('ALTER TABLE collab_users ADD COLUMN IF NOT EXISTS linkedin_url TEXT')
+  await dbClient.query('ALTER TABLE collab_users ADD COLUMN IF NOT EXISTS portfolio_url TEXT')
+  await dbClient.query('ALTER TABLE collab_users ADD COLUMN IF NOT EXISTS skills TEXT')
   await dbClient.query('ALTER TABLE collab_users ADD COLUMN IF NOT EXISTS github_username TEXT')
   await dbClient.query('ALTER TABLE collab_users ADD COLUMN IF NOT EXISTS github_access_token TEXT')
   await dbClient.query('ALTER TABLE collab_users ADD COLUMN IF NOT EXISTS github_token_scope TEXT')
@@ -3930,6 +3949,7 @@ const initDb = async () => {
 
   const usersResult = await dbClient.query(
     `SELECT id, email, name, avatar_url, bio, pronouns, company, location,
+            job_title, website_url, github_profile, linkedin_url, portfolio_url, skills,
             github_username, github_access_token, github_token_scope, github_connected_at
        FROM collab_users`,
   )
@@ -3943,6 +3963,12 @@ const initDb = async () => {
       pronouns: row.pronouns || '',
       company: row.company || '',
       location: row.location || '',
+      jobTitle: row.job_title || '',
+      websiteUrl: row.website_url || '',
+      githubProfile: row.github_profile || '',
+      linkedinUrl: row.linkedin_url || '',
+      portfolioUrl: row.portfolio_url || '',
+      skills: row.skills || '',
       githubUsername: row.github_username || '',
       githubAccessToken: row.github_access_token || '',
       githubTokenScope: row.github_token_scope || '',
@@ -4077,6 +4103,12 @@ const sanitizeUser = (user) => ({
   pronouns: user.pronouns || '',
   company: user.company || '',
   location: user.location || '',
+  jobTitle: user.jobTitle || '',
+  websiteUrl: user.websiteUrl || '',
+  githubProfile: user.githubProfile || '',
+  linkedinUrl: user.linkedinUrl || '',
+  portfolioUrl: user.portfolioUrl || '',
+  skills: user.skills || '',
 })
 
 const isSyntheticUserName = (name) => {
@@ -4110,6 +4142,12 @@ const parseUserFromClaims = (userId, claims = {}) => {
     pronouns: '',
     company: '',
     location: '',
+    jobTitle: '',
+    websiteUrl: '',
+    githubProfile: '',
+    linkedinUrl: '',
+    portfolioUrl: '',
+    skills: '',
     githubUsername: '',
     githubAccessToken: '',
     githubTokenScope: '',
@@ -5366,18 +5404,41 @@ app.put('/api/me', authMiddleware, async (req, res) => {
   const pronouns = String(req.body?.pronouns || '').trim()
   const company = String(req.body?.company || '').trim()
   const location = String(req.body?.location || '').trim()
+  const jobTitle = String(req.body?.jobTitle || '').trim()
+  const websiteUrl = String(req.body?.websiteUrl || '').trim()
+  const githubProfile = String(req.body?.githubProfile || '').trim()
+  const linkedinUrl = String(req.body?.linkedinUrl || '').trim()
+  const portfolioUrl = String(req.body?.portfolioUrl || '').trim()
+  const skills = String(req.body?.skills || '').trim()
   const avatarUrl = String(req.body?.avatarUrl || '').trim()
 
   if (!name) {
     return res.status(400).json({ message: 'Name is required' })
   }
 
-  if (name.length > 100 || bio.length > 300 || pronouns.length > 60 || company.length > 100 || location.length > 120) {
+  if (
+    name.length > 100 ||
+    bio.length > 300 ||
+    pronouns.length > 60 ||
+    company.length > 100 ||
+    location.length > 120 ||
+    jobTitle.length > 100 ||
+    websiteUrl.length > 200 ||
+    githubProfile.length > 200 ||
+    linkedinUrl.length > 200 ||
+    portfolioUrl.length > 200 ||
+    skills.length > 200
+  ) {
     return res.status(400).json({ message: 'One or more profile fields are too long' })
   }
 
   if (avatarUrl && !avatarUrl.startsWith('data:image/') && !/^https?:\/\//i.test(avatarUrl)) {
     return res.status(400).json({ message: 'Avatar must be an image data URL or an http/https URL' })
+  }
+
+  const links = [websiteUrl, githubProfile, linkedinUrl, portfolioUrl]
+  if (links.some((value) => value && !/^https?:\/\//i.test(value))) {
+    return res.status(400).json({ message: 'Profile links must use http or https URLs' })
   }
 
   const updatedUser = {
@@ -5387,6 +5448,12 @@ app.put('/api/me', authMiddleware, async (req, res) => {
     pronouns,
     company,
     location,
+    jobTitle,
+    websiteUrl,
+    githubProfile,
+    linkedinUrl,
+    portfolioUrl,
+    skills,
     avatarUrl,
   }
 
