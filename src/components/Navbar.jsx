@@ -4,22 +4,21 @@ import { useAuth } from '../context/AuthContext'
 import { apiRequest } from '../lib/api'
 
 const landingNavLinks = [
-  { href: '#about', label: 'About' },
+  { href: '#about', label: 'Products' },
   { href: '#workflow', label: 'Workflow' },
   { href: '#demo', label: 'Demo' },
-  { href: '#voices', label: 'Voices' },
-  { href: '#join', label: 'Join' },
 ]
 
 const appNavLinks = [
-  { to: '/dashboard', label: 'Dashboard' },
-  { to: '/profile', label: 'Profile' },
+  { to: '/dashboard', label: 'Workspaces' },
+  { to: '/profile', label: 'Account' },
 ]
 
 const Navbar = ({ variant = 'landing', theme: externalTheme, setTheme: externalSetTheme }) => {
   const { isAuthenticated, user, logout, getAuthToken } = useAuth()
   const location = useLocation()
   const [avatarUrl, setAvatarUrl] = useState('')
+  const [activeLandingHref, setActiveLandingHref] = useState(landingNavLinks[0]?.href || '#workflow')
   
   // Use internal state if no external theme is provided
   const [internalTheme, setInternalTheme] = useState(() => {
@@ -61,39 +60,103 @@ const Navbar = ({ variant = 'landing', theme: externalTheme, setTheme: externalS
   const isLanding = variant === 'landing'
   const navLinks = isLanding ? landingNavLinks : appNavLinks
 
+  useEffect(() => {
+    if (!isLanding || typeof window === 'undefined') return undefined
+
+    const validHrefs = new Set(landingNavLinks.map((link) => link.href))
+
+    const syncFromHash = () => {
+      const hash = String(window.location.hash || '').trim()
+      if (validHrefs.has(hash)) {
+        setActiveLandingHref(hash)
+      }
+    }
+
+    syncFromHash()
+    window.addEventListener('hashchange', syncFromHash)
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visibleEntries = entries
+          .filter((entry) => entry.isIntersecting)
+          .sort((a, b) => b.intersectionRatio - a.intersectionRatio)
+
+        if (visibleEntries.length === 0) return
+        const topEntry = visibleEntries[0]
+        const href = `#${topEntry.target.id}`
+        if (validHrefs.has(href)) {
+          setActiveLandingHref(href)
+        }
+      },
+      {
+        root: null,
+        threshold: [0.45, 0.6, 0.75],
+      },
+    )
+
+    landingNavLinks.forEach((link) => {
+      const sectionId = String(link.href || '').replace('#', '')
+      const section = document.getElementById(sectionId)
+      if (section) observer.observe(section)
+    })
+
+    return () => {
+      window.removeEventListener('hashchange', syncFromHash)
+      observer.disconnect()
+    }
+  }, [isLanding])
+
   return (
-    <header className="fixed inset-x-0 top-0 z-40 px-3 py-3">
-      <nav className="mx-auto flex w-full max-w-7xl flex-wrap items-center justify-between gap-3 rounded-full border border-slate-300/70 bg-white/80 px-4 py-2 shadow-lg shadow-slate-300/40 backdrop-blur-lg dark:border-slate-700/70 dark:bg-black dark:shadow-black/50">
-        <Link to="/">
+    <header className="fixed inset-x-0 top-0 z-40 px-3 py-4">
+      <nav className="mx-auto flex w-full max-w-7xl flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-300/60 bg-white/82 px-4 py-2.5 shadow-xl shadow-slate-300/30 backdrop-blur-xl dark:border-slate-700/80 dark:bg-slate-950/88 dark:shadow-black/55">
+        <Link to="/" className="flex items-center gap-2.5">
           <img
             src={theme === 'dark' ? '/branding/logo1.png' : '/branding/logo2.png'}
             alt="Logo"
-            className="h-12 w-22 rounded-full"
+            className="h-11 w-11 rounded-full object-cover"
           />
         </Link>
 
-        <div className="flex flex-wrap items-center justify-center gap-4 text-xs font-bold uppercase tracking-[0.14em] text-slate-600 dark:text-slate-300">
+        <div className="relative flex flex-wrap items-center justify-center gap-4 text-sm font-semibold text-slate-700 dark:text-slate-200">
           {navLinks.map((link) =>
             isLanding ? (
-              <a
-                key={link.href}
-                href={link.href}
-                className="hover:text-slate-900 dark:hover:text-white"
-              >
-                {link.label}
-              </a>
+              (() => {
+                const isActive = activeLandingHref === link.href
+                return (
+                  <a
+                    key={link.href}
+                    href={link.href}
+                    onClick={() => setActiveLandingHref(link.href)}
+                    className={`relative rounded-lg px-2 py-2 transition duration-150 hover:-translate-y-0.5 hover:text-slate-900 dark:hover:text-white ${
+                      isActive ? 'text-slate-900 dark:text-white' : 'text-slate-600 dark:text-slate-300'
+                    } after:absolute after:bottom-0.5 after:left-1/2 after:h-0.5 after:w-[calc(100%-10px)] after:-translate-x-1/2 after:rounded-full after:bg-slate-900 after:transition-transform after:duration-150 dark:after:bg-white ${
+                      isActive ? 'after:scale-x-100' : 'after:scale-x-0 hover:after:scale-x-100'
+                    }`}
+                  >
+                    {link.label}
+                  </a>
+                )
+              })()
             ) : (
-              <Link
-                key={link.to}
-                to={link.to}
-                className={`hover:text-slate-900 dark:hover:text-white ${
-                  location.pathname === link.to ? 'text-slate-900 dark:text-white' : ''
-                }`}
-              >
-                {link.label}
-              </Link>
+              (() => {
+                const isActive = location.pathname === link.to
+                return (
+                  <Link
+                    key={link.to}
+                    to={link.to}
+                    className={`relative rounded-lg px-2 py-2 transition duration-150 hover:-translate-y-0.5 hover:text-slate-900 dark:hover:text-white ${
+                      isActive ? 'text-slate-900 dark:text-white' : 'text-slate-600 dark:text-slate-300'
+                    } after:absolute after:bottom-0.5 after:left-1/2 after:h-0.5 after:w-[calc(100%-10px)] after:-translate-x-1/2 after:rounded-full after:bg-slate-900 after:transition-transform after:duration-150 dark:after:bg-white ${
+                      isActive ? 'after:scale-x-100' : 'after:scale-x-0 hover:after:scale-x-100'
+                    }`}
+                  >
+                    {link.label}
+                  </Link>
+                )
+              })()
             )
           )}
+
         </div>
 
         <div className="flex items-center gap-2">

@@ -87,6 +87,18 @@ const createTerminalState = (id, title, projectName = '', shellProfile = DEFAULT
   shellProfile,
 })
 
+const isNumericTerminalTitle = (title = '') => /^\d+$/.test(String(title || '').trim())
+
+const normalizeAutoTerminalTitles = (terminalList = []) =>
+  terminalList.map((terminal, index) =>
+    isNumericTerminalTitle(terminal.title)
+      ? {
+          ...terminal,
+          title: String(index + 1),
+        }
+      : terminal,
+  )
+
 const renderTextWithLinks = (text) => {
   const content = String(text || '')
   const parts = content.split(URL_REGEX)
@@ -352,7 +364,7 @@ const Terminal = ({ projectId, projectName, token, userId, ownerId, sharedTermin
           return nextTerminals[0].id
         })
 
-        return nextTerminals
+        return normalizeAutoTerminalTitles(nextTerminals)
       })
     }
 
@@ -411,13 +423,19 @@ const Terminal = ({ projectId, projectName, token, userId, ownerId, sharedTermin
     const normalizedCommand = trimmed.replace(/^run\s+(.+)$/i, '$1').trim()
     if (!normalizedCommand) return
     const isCdCommand = normalizedCommand === 'cd' || normalizedCommand.startsWith('cd ')
+    const willStartNewProcess = !activeTerminal.isRunning || (activeTerminal.isRunning && hasRunPrefix && !isCdCommand)
 
     updateTerminal(activeTerminal.id, (terminal) => ({
       ...terminal,
-      history: [...terminal.history, { type: 'command', text: `${promptLabel} ${trimmed}` }],
+      history: [
+        ...terminal.history,
+        { type: 'command', text: `${promptLabel} ${trimmed}` },
+        ...(willStartNewProcess ? [{ type: 'system', text: 'Executing command...' }] : []),
+      ],
       commandHistory: [...terminal.commandHistory, trimmed],
       historyIndex: -1,
       input: '',
+      isRunning: willStartNewProcess ? true : terminal.isRunning,
       completionSeed: '',
       completionSuggestions: [],
       completionIndex: -1,
@@ -452,10 +470,15 @@ const Terminal = ({ projectId, projectName, token, userId, ownerId, sharedTermin
       )
 
       setTerminals((prev) => [
-        ...prev,
+        ...normalizeAutoTerminalTitles(prev),
         {
           ...forcedTerminal,
-          history: [...forcedTerminal.history, { type: 'command', text: `${promptLabel} ${trimmed}` }],
+          isRunning: true,
+          history: [
+            ...forcedTerminal.history,
+            { type: 'command', text: `${promptLabel} ${trimmed}` },
+            { type: 'system', text: 'Executing command...' },
+          ],
           commandHistory: [trimmed],
         },
       ])
@@ -506,20 +529,23 @@ const Terminal = ({ projectId, projectName, token, userId, ownerId, sharedTermin
 
   const createTerminal = (profileId = defaultProfileId, splitFromTerminal = null) => {
     if (inputDisabled) return
-    const nextNumber = terminals.length + 1
     const id = nextTerminalId()
     const nextProfileId = profileLabelById.has(profileId) ? profileId : DEFAULT_TERMINAL_PROFILE_ID
     const baseTerminal = splitFromTerminal || null
-    const created = createTerminalState(id, String(nextNumber), projectName || '', nextProfileId)
-    setTerminals((prev) => [
-      ...prev,
-      {
-        ...created,
-        cwd: baseTerminal?.cwd || created.cwd,
-        cwdDisplay: baseTerminal?.cwdDisplay || created.cwdDisplay,
-        projectName: baseTerminal?.projectName || created.projectName,
-      },
-    ])
+    setTerminals((prev) => {
+      const nextNumber = prev.length + 1
+      const created = createTerminalState(id, String(nextNumber), projectName || '', nextProfileId)
+      const nextTerminals = [
+        ...prev,
+        {
+          ...created,
+          cwd: baseTerminal?.cwd || created.cwd,
+          cwdDisplay: baseTerminal?.cwdDisplay || created.cwdDisplay,
+          projectName: baseTerminal?.projectName || created.projectName,
+        },
+      ]
+      return normalizeAutoTerminalTitles(nextTerminals)
+    })
     setActiveTerminalId(id)
   }
 
@@ -556,7 +582,7 @@ const Terminal = ({ projectId, projectName, token, userId, ownerId, sharedTermin
       socket?.emit('terminal:stop', { projectId, terminalId })
     }
     const next = terminals.filter((terminal) => terminal.id !== terminalId)
-    setTerminals(next)
+    setTerminals(normalizeAutoTerminalTitles(next))
     if (activeTerminalId === terminalId) {
       setActiveTerminalId(next[0].id)
     }
@@ -837,6 +863,12 @@ const Terminal = ({ projectId, projectName, token, userId, ownerId, sharedTermin
             {renderTextWithLinks(entry.text)}
           </div>
         ))}
+        {activeTerminal?.isRunning && (
+          <div className="terminal-line terminal-running-indicator" aria-live="polite">
+            <span className="terminal-running-dot" />
+            <span>Running command...</span>
+          </div>
+        )}
         <form onSubmit={handleSubmit} className="terminal-inline-form">
           <span className="terminal-prompt">{promptLabel}</span>
           <input

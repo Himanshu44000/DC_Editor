@@ -275,6 +275,39 @@
   background: #060a10;
 }
 
+.project-page .terminal-running-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+  color: #7dd3fc;
+  font-weight: 600;
+  opacity: 0.95;
+}
+
+.project-page .terminal-running-dot {
+  width: 0.52rem;
+  height: 0.52rem;
+  border-radius: 999px;
+  background: #22d3ee;
+  box-shadow: 0 0 0 rgba(34, 211, 238, 0.65);
+  animation: terminal-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes terminal-pulse {
+  0% {
+    transform: scale(0.8);
+    box-shadow: 0 0 0 0 rgba(34, 211, 238, 0.55);
+  }
+  70% {
+    transform: scale(1);
+    box-shadow: 0 0 0 8px rgba(34, 211, 238, 0);
+  }
+  100% {
+    transform: scale(0.8);
+    box-shadow: 0 0 0 0 rgba(34, 211, 238, 0);
+  }
+}
+
 /* Terminal Input */
 .project-page .terminal-input-wrap {
   display: flex;
@@ -486,6 +519,11 @@
   border: 1px solid rgba(16, 185, 129, 0.4);
   color: var(--accent-green-light);
   grid-column: 1 / -1;
+  width: auto;
+  justify-self: center;
+  min-width: 132px;
+  max-width: 196px;
+  padding-inline: 0.72rem;
 }
 
 .voice-channel-actions .join-btn:hover {
@@ -572,7 +610,8 @@
 }
 
 .invite-actions {
-  display: grid;
+  display: flex;
+  justify-content: center;
   gap: 0.25rem;
 }
 
@@ -586,6 +625,9 @@
   font-weight: 500;
   cursor: pointer;
   transition: all 0.15s ease;
+  width: auto;
+  min-width: 148px;
+  max-width: 200px;
 }
 
 .invite-actions .generate-btn:hover {
@@ -983,11 +1025,11 @@
   bottom: 0;
   right: 24px;
   width: 280px;
-  background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
-  border: 1px solid rgba(59, 130, 246, 0.25);
+  background: linear-gradient(140deg, #1a365d 0%, #0f2948 52%, #0b2239 100%);
+  border: 1px solid rgba(56, 189, 248, 0.55);
   border-bottom: none;
   border-radius: 8px 8px 0 0;
-  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 -10px 30px rgba(2, 132, 199, 0.28);
   z-index: 1000;
   overflow: hidden;
 }
@@ -1001,14 +1043,14 @@
 }
 
 .ai-chat-bar-header:hover {
-  background: rgba(59, 130, 246, 0.08);
+  background: rgba(56, 189, 248, 0.16);
 }
 
 .ai-chat-bar-avatar {
-  width: 36px;
-  height: 36px;
+  width: 42px;
+  height: 42px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #3b82f6 0%, #06b6d4 100%);
+  background: linear-gradient(135deg, #38bdf8 0%, #14b8a6 100%);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1024,16 +1066,16 @@
 }
 
 .ai-chat-bar-avatar svg {
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   color: white;
 }
 
 .ai-chat-bar-title {
   flex: 1;
-  font-size: 0.88rem;
+  font-size: 0.9rem;
   font-weight: 600;
-  color: var(--text-primary);
+  color: #f0f9ff;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1048,7 +1090,7 @@
 .ai-chat-bar-actions button {
   background: transparent;
   border: none;
-  width: 28px;
+  width: 38px;
   height: 28px;
   border-radius: 4px;
   color: var(--text-secondary);
@@ -1088,11 +1130,11 @@
   right: 24px;
   width: 360px;
   height: 480px;
-  background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
-  border: 1px solid rgba(59, 130, 246, 0.2);
+  background: linear-gradient(180deg, #0c253f 0%, #132c47 42%, #1c2f45 100%);
+  border: 1px solid rgba(56, 189, 248, 0.35);
   border-bottom: none;
   border-radius: 12px 12px 0 0;
-  box-shadow: 0 -8px 40px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 -12px 42px rgba(2, 132, 199, 0.3);
   z-index: 1000;
   display: flex;
   flex-direction: column;
@@ -1119,10 +1161,10 @@
 }
 
 .ai-chat-expanded-avatar {
-  width: 32px;
-  height: 32px;
+  width: 38px;
+  height: 38px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #3b82f6 0%, #06b6d4 100%);
+  background: linear-gradient(135deg, #38bdf8 0%, #14b8a6 100%);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1137,8 +1179,8 @@
 }
 
 .ai-chat-expanded-avatar svg {
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
   color: white;
 }
 
@@ -1153,13 +1195,14 @@
   display: flex;
   align-items: center;
   gap: 0.25rem;
+ 
 }
 
 .ai-chat-expanded-actions button {
   background: transparent;
   border: none;
-  width: 30px;
-  height: 30px;
+  width: 45px;
+  height: 45px;
   border-radius: 6px;
   color: var(--text-secondary);
   cursor: pointer;

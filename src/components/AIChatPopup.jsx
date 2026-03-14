@@ -4,6 +4,7 @@ import { apiRequest } from '../lib/api'
 const API_BASE = 'http://localhost:4000/api'
 const MAX_MESSAGE_LENGTH = 4000
 const MAX_ATTACHMENT_CHARS = 12000
+const DEFAULT_CHATBOT_LOGO = '/branding/Ai.png'
 
 const sortConversations = (items) =>
   [...(Array.isArray(items) ? items : [])].sort(
@@ -162,6 +163,8 @@ const AIChatPopup = ({ projectId, getAuthToken, canUseAI, avatarSrc, selectedFil
   const [error, setError] = useState('')
   const [includeFileContext, setIncludeFileContext] = useState(true)
   const [aiUsage, setAiUsage] = useState(null)
+  const [isChatbotLogoBroken, setIsChatbotLogoBroken] = useState(false)
+  const chatbotLogoSrc = avatarSrc || DEFAULT_CHATBOT_LOGO
   
   const messagesEndRef = useRef(null)
   const inputRef = useRef(null)
@@ -186,6 +189,10 @@ const AIChatPopup = ({ projectId, getAuthToken, canUseAI, avatarSrc, selectedFil
   useEffect(() => {
     onSendingStateChange?.(isSending)
   }, [isSending, onSendingStateChange])
+
+  useEffect(() => {
+    setIsChatbotLogoBroken(false)
+  }, [chatbotLogoSrc])
 
   useEffect(() => {
     if (!isExpanded || !canUseAI || !projectId) return
@@ -377,7 +384,11 @@ const AIChatPopup = ({ projectId, getAuthToken, canUseAI, avatarSrc, selectedFil
       <div className="ai-chat-bar">
         <div className="ai-chat-bar-header" onClick={handleToggle}>
           <div className="ai-chat-bar-avatar">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3" /><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32l1.41 1.41M2 12h2m16 0h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" /></svg>
+            {!isChatbotLogoBroken ? (
+              <img src={chatbotLogoSrc} alt="AI Assistant" onError={() => setIsChatbotLogoBroken(true)} />
+            ) : (
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3" /><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32l1.41 1.41M2 12h2m16 0h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" /></svg>
+            )}
           </div>
           <span className="ai-chat-bar-title">AI Assistant</span>
           <div className="ai-chat-bar-actions">
@@ -397,7 +408,11 @@ const AIChatPopup = ({ projectId, getAuthToken, canUseAI, avatarSrc, selectedFil
           </button>
         )}
         <div className="ai-chat-expanded-avatar">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3" /><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32l1.41 1.41M2 12h2m16 0h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" /></svg>
+          {!isChatbotLogoBroken ? (
+            <img src={chatbotLogoSrc} alt="AI Assistant" onError={() => setIsChatbotLogoBroken(true)} />
+          ) : (
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3" /><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32l1.41 1.41M2 12h2m16 0h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" /></svg>
+          )}
         </div>
         <span className="ai-chat-expanded-title">{viewMode === 'chat' ? (activeConversation?.title || 'Chat') : 'AI Assistant'}</span>
         <div className="ai-chat-expanded-actions">
