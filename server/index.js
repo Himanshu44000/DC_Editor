@@ -4726,6 +4726,12 @@ const isGeminiRateLimitMessage = (message = '') => {
   return /rate limit|too many requests|resource has been exhausted|retry in|429/i.test(normalized)
 }
 
+const isGeminiSystemInstructionUnsupportedMessage = (message = '') => {
+  const normalized = String(message || '').toLowerCase()
+  if (!normalized) return false
+  return /developer instruction is not enabled|system instruction is not enabled|system_instruction|systeminstruction/i.test(normalized)
+}
+
 const normalizeGeminiErrorMessage = (message = '') => {
   const normalized = String(message || '').trim()
   if (!normalized) return 'Gemini request failed.'
@@ -4959,18 +4965,22 @@ const callGeminiGenerate = async (historyMessages, options = {}) => {
     : 2048
   const systemInstruction = String(options.systemInstruction || AI_SYSTEM_INSTRUCTION).trim() || AI_SYSTEM_INSTRUCTION
 
-  const requestBody = {
-    systemInstruction: {
-      role: 'system',
-      parts: [{ text: systemInstruction }],
-    },
+  const createRequestBody = (includeSystemInstruction = true) => ({
+    ...(includeSystemInstruction
+      ? {
+          systemInstruction: {
+            role: 'system',
+            parts: [{ text: systemInstruction }],
+          },
+        }
+      : {}),
     contents: historyMessages,
     generationConfig: {
       temperature,
       topP: 0.95,
       maxOutputTokens,
     },
-  }
+  })
 
   const configuredFallbacks = [...GEMINI_FALLBACK_MODELS, ...GEMINI_DEFAULT_FALLBACK_MODELS]
   const modelCandidates = [GEMINI_MODEL, ...configuredFallbacks].filter(Boolean)
@@ -4985,6 +4995,7 @@ const callGeminiGenerate = async (historyMessages, options = {}) => {
 
   for (const modelName of orderedModels) {
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelName)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`
+    let includeSystemInstruction = true
 
     for (let attempt = 0; attempt <= GEMINI_RATE_LIMIT_MAX_RETRIES; attempt += 1) {
       const response = await fetch(endpoint, {
@@ -4992,7 +5003,7 @@ const callGeminiGenerate = async (historyMessages, options = {}) => {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(requestBody),
+        body: JSON.stringify(createRequestBody(includeSystemInstruction)),
       })
 
       const payload = await response.json().catch(() => ({}))
@@ -5004,8 +5015,17 @@ const callGeminiGenerate = async (historyMessages, options = {}) => {
         const isNotFound = /unavailable for this api version|not found|not supported/i.test(normalizedMessage)
         const isRateLimit = isGeminiRateLimitMessage(rawMessage) || /temporarily rate-limited/i.test(normalizedMessage)
         const isHardQuota = isGeminiHardQuotaMessage(rawMessage) || /quota exceeded/i.test(normalizedMessage)
+        const isSystemInstructionUnsupported =
+          isGeminiSystemInstructionUnsupportedMessage(rawMessage) ||
+          isGeminiSystemInstructionUnsupportedMessage(normalizedMessage)
 
         lastError = new Error(`${normalizedMessage} [model: ${modelName}]`)
+
+        if (isSystemInstructionUnsupported && includeSystemInstruction) {
+          includeSystemInstruction = false
+          attempt -= 1
+          continue
+        }
 
         if (isRateLimit && attempt < GEMINI_RATE_LIMIT_MAX_RETRIES) {
           const retryDelayMs = extractGeminiRetryDelayMs(rawMessage)
@@ -5026,6 +5046,11 @@ const callGeminiGenerate = async (historyMessages, options = {}) => {
           break
         }
 
+        if (isSystemInstructionUnsupported && modelName !== orderedModels[orderedModels.length - 1]) {
+          // Some models (for example Gemma variants) do not support system/developer instructions.
+          break
+        }
+
         throw lastError
       }
 
@@ -5036,6 +5061,171 @@ const callGeminiGenerate = async (historyMessages, options = {}) => {
       }
 
       return text
+    }
+  }
+
+  throw lastError || new Error('Gemini request failed for all configured models.')
+}
+
+const callGeminiGenerateStream = async (historyMessages, options = {}) => {
+  const temperature = Number.isFinite(Number(options.temperature))
+    ? Number(options.temperature)
+    : 0.25
+  const maxOutputTokens = Number.isFinite(Number(options.maxOutputTokens))
+    ? Math.max(24, Number(options.maxOutputTokens))
+    : 2048
+  const systemInstruction = String(options.systemInstruction || AI_SYSTEM_INSTRUCTION).trim() || AI_SYSTEM_INSTRUCTION
+  const onChunk = typeof options.onChunk === 'function' ? options.onChunk : () => {}
+
+  const createRequestBody = (includeSystemInstruction = true) => ({
+    ...(includeSystemInstruction
+      ? {
+          systemInstruction: {
+            role: 'system',
+            parts: [{ text: systemInstruction }],
+          },
+        }
+      : {}),
+    contents: historyMessages,
+    generationConfig: {
+      temperature,
+      topP: 0.95,
+      maxOutputTokens,
+    },
+  })
+
+  const configuredFallbacks = [...GEMINI_FALLBACK_MODELS, ...GEMINI_DEFAULT_FALLBACK_MODELS]
+  const modelCandidates = [GEMINI_MODEL, ...configuredFallbacks].filter(Boolean)
+  const triedModels = new Set()
+  const orderedModels = modelCandidates.filter((model) => {
+    if (triedModels.has(model)) return false
+    triedModels.add(model)
+    return true
+  })
+
+  let lastError = null
+
+  for (const modelName of orderedModels) {
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelName)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(GEMINI_API_KEY)}`
+    let includeSystemInstruction = true
+
+    for (let attempt = 0; attempt <= GEMINI_RATE_LIMIT_MAX_RETRIES; attempt += 1) {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(createRequestBody(includeSystemInstruction)),
+      })
+
+      if (!response.ok || !response.body) {
+        const payload = await response.json().catch(() => ({}))
+        const rawMessage =
+          String(payload?.error?.message || payload?.message || '').trim() ||
+          `Gemini request failed (${response.status})`
+        const normalizedMessage = normalizeGeminiErrorMessage(rawMessage)
+        const isNotFound = /unavailable for this api version|not found|not supported/i.test(normalizedMessage)
+        const isRateLimit = isGeminiRateLimitMessage(rawMessage) || /temporarily rate-limited/i.test(normalizedMessage)
+        const isHardQuota = isGeminiHardQuotaMessage(rawMessage) || /quota exceeded/i.test(normalizedMessage)
+        const isSystemInstructionUnsupported =
+          isGeminiSystemInstructionUnsupportedMessage(rawMessage) ||
+          isGeminiSystemInstructionUnsupportedMessage(normalizedMessage)
+
+        lastError = new Error(`${normalizedMessage} [model: ${modelName}]`)
+
+        if (isSystemInstructionUnsupported && includeSystemInstruction) {
+          includeSystemInstruction = false
+          attempt -= 1
+          continue
+        }
+
+        if (isRateLimit && attempt < GEMINI_RATE_LIMIT_MAX_RETRIES) {
+          const retryDelayMs = extractGeminiRetryDelayMs(rawMessage)
+          const waitMs = Math.min(
+            GEMINI_RATE_LIMIT_MAX_WAIT_MS,
+            Math.max(500, Number.isFinite(retryDelayMs) ? retryDelayMs : 1500),
+          )
+          await delay(waitMs)
+          continue
+        }
+
+        if (isNotFound && modelName !== orderedModels[orderedModels.length - 1]) {
+          break
+        }
+
+        if (isHardQuota && modelName !== orderedModels[orderedModels.length - 1]) {
+          break
+        }
+
+        if (isSystemInstructionUnsupported && modelName !== orderedModels[orderedModels.length - 1]) {
+          // Some models (for example Gemma variants) do not support system/developer instructions.
+          break
+        }
+
+        throw lastError
+      }
+
+      const decoder = new TextDecoder()
+      const reader = response.body.getReader()
+      let buffer = ''
+      let accumulatedText = ''
+
+      const consumeSseBuffer = (flushRemainder = false) => {
+        const normalizedBuffer = buffer.replace(/\r\n/g, '\n')
+        const events = normalizedBuffer.split('\n\n')
+        buffer = events.pop() || ''
+        if (flushRemainder && buffer.trim()) {
+          events.push(buffer)
+          buffer = ''
+        }
+
+        for (const eventBlock of events) {
+          const data = eventBlock
+            .split('\n')
+            .filter((line) => line.startsWith('data:'))
+            .map((line) => line.replace(/^data:\s?/, ''))
+            .join('\n')
+            .trim()
+
+          if (!data || data === '[DONE]') continue
+
+          const parsed = safeJsonParse(data)
+          if (!parsed) continue
+
+          const nextText = extractGeminiText(parsed)
+          if (!nextText) continue
+
+          let delta = nextText
+          if (nextText.startsWith(accumulatedText)) {
+            delta = nextText.slice(accumulatedText.length)
+            accumulatedText = nextText
+          } else {
+            accumulatedText += delta
+          }
+
+          if (delta) {
+            onChunk(delta)
+          }
+        }
+      }
+
+      while (true) {
+        const { value, done } = await reader.read()
+        if (done) {
+          consumeSseBuffer(true)
+          break
+        }
+
+        buffer += decoder.decode(value, { stream: true })
+        consumeSseBuffer(false)
+      }
+
+      if (!accumulatedText.trim()) {
+        lastError = new Error(`Gemini returned an empty response [model: ${modelName}]`)
+        break
+      }
+
+      return accumulatedText.trim()
     }
   }
 
@@ -6616,27 +6806,50 @@ app.post('/api/projects/:projectId/ai/conversations/:conversationId/stream', aut
     const sendEvent = (payload) => {
       if (streamClosed) return
       res.write(`data: ${JSON.stringify(payload)}\n\n`)
+      res.flush?.()
     }
 
     sendEvent({ type: 'start' })
 
     let assistantText = ''
     try {
-      assistantText = await callGeminiGenerate(geminiHistory)
+      assistantText = await callGeminiGenerateStream(geminiHistory, {
+        onChunk: (chunk) => {
+          if (!chunk) return
+          sendEvent({ type: 'chunk', chunk })
+        },
+      })
     } catch (modelError) {
-      sendEvent({ type: 'error', message: modelError.message || 'Failed to generate AI response' })
-      if (!streamClosed) {
-        res.end()
-      }
-      return
-    }
+      const modelErrorMessage = String(modelError?.message || 'Failed to generate AI response')
+      const canFallbackToNonStream = /empty response/i.test(modelErrorMessage)
 
-    const chunkSize = 28
-    for (let index = 0; index < assistantText.length; index += chunkSize) {
-      const chunk = assistantText.slice(index, index + chunkSize)
-      sendEvent({ type: 'chunk', chunk })
-      await new Promise((resolve) => setTimeout(resolve, 10))
-      if (streamClosed) {
+      if (!canFallbackToNonStream) {
+        sendEvent({ type: 'error', message: modelErrorMessage })
+        if (!streamClosed) {
+          res.end()
+        }
+        return
+      }
+
+      try {
+        assistantText = await callGeminiGenerate(geminiHistory)
+        if (!assistantText.trim()) {
+          throw new Error(modelErrorMessage)
+        }
+
+        const fallbackChunks = assistantText.match(/\S+\s*/g) || [assistantText]
+        for (const chunk of fallbackChunks) {
+          sendEvent({ type: 'chunk', chunk })
+          if (streamClosed) {
+            return
+          }
+          await delay(6)
+        }
+      } catch (fallbackError) {
+        sendEvent({ type: 'error', message: fallbackError.message || modelErrorMessage })
+        if (!streamClosed) {
+          res.end()
+        }
         return
       }
     }

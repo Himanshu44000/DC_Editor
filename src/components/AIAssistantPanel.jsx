@@ -667,6 +667,16 @@ const AIAssistantPanel = ({
                 setResponsePhase('streaming')
               }
               accumulatedAssistantText += String(payload.chunk || '')
+              setMessages((prev) =>
+                prev.map((entry) =>
+                  entry.id === assistantLocalId
+                    ? {
+                        ...entry,
+                        content: accumulatedAssistantText,
+                      }
+                    : entry,
+                ),
+              )
             }
 
             if (payload.type === 'done' && payload.message?.id) {
@@ -918,7 +928,7 @@ const AIAssistantPanel = ({
             </button>
           </div>
 
-          {isSending && (
+          {responsePhase === 'thinking' && (
             <div className="ai-run-state" role="status" aria-live="polite">
               <span className="ai-run-dot" />
               <span>AI is thinking...</span>

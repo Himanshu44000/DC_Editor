@@ -29,6 +29,8 @@ const FileTree = ({
   const createInputRef = useRef(null)
   const renameInputRef = useRef(null)
   const assetInputRef = useRef(null)
+  const createFocusKeyRef = useRef('')
+  const renameFocusKeyRef = useRef('')
 
   const focusTree = () => {
     if (!treeRef.current) return
@@ -40,19 +42,38 @@ const FileTree = ({
   }
 
   useEffect(() => {
-    if (!pendingCreate) return
+    if (!pendingCreate) {
+      createFocusKeyRef.current = ''
+      return
+    }
+
+    const focusKey = `${pendingCreate.type}:${pendingCreate.parentPath}`
+    if (createFocusKeyRef.current === focusKey) return
+    createFocusKeyRef.current = focusKey
+
     if (createInputRef.current) {
       createInputRef.current.focus()
     }
-  }, [pendingCreate])
+  }, [pendingCreate?.type, pendingCreate?.parentPath])
 
   useEffect(() => {
-    if (!pendingRename) return
+    if (!pendingRename) {
+      renameFocusKeyRef.current = ''
+      return
+    }
+
+    const focusKey =
+      pendingRename.type === 'file'
+        ? `file:${pendingRename.fileId}`
+        : `folder:${normalizePathKey(pendingRename.folderPath)}`
+    if (renameFocusKeyRef.current === focusKey) return
+    renameFocusKeyRef.current = focusKey
+
     if (renameInputRef.current) {
       renameInputRef.current.focus()
       renameInputRef.current.select()
     }
-  }, [pendingRename])
+  }, [pendingRename?.type, pendingRename?.fileId, pendingRename?.folderPath])
 
   const normalizePath = (value = '') =>
     String(value || '')

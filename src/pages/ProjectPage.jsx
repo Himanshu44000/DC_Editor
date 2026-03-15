@@ -392,6 +392,7 @@ const ProjectPage = () => {
   const monacoRef = useRef(null)
   const editorRef = useRef(null)
   const practiceFileInputRef = useRef(null)
+  const practiceFileInputPrimedRef = useRef(false)
   const editorFocusedRef = useRef(false)
   const selectedFileIdRef = useRef(null)
   const typingGuardUntilRef = useRef(0)
@@ -1708,14 +1709,21 @@ const ProjectPage = () => {
   }, [files, pendingPracticeSelectPath])
 
   useEffect(() => {
-    if (!isCreatingPracticeFile) return
+    if (!isCreatingPracticeFile) {
+      practiceFileInputPrimedRef.current = false
+      return
+    }
+
+    if (practiceFileInputPrimedRef.current) return
     const input = practiceFileInputRef.current
     if (!input) return
 
     const fileName = String(practiceFileName || '')
+    if (!fileName.trim()) return
     const dotIndex = fileName.lastIndexOf('.')
     const selectionEnd = dotIndex > 0 ? dotIndex : fileName.length
 
+    practiceFileInputPrimedRef.current = true
     setTimeout(() => {
       try {
         input.focus()

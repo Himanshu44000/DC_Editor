@@ -69,6 +69,14 @@ const renderInlineMarkdown = (text = '', keyPrefix = 'inline') => {
   return parts
 }
 
+const normalizeTableRow = (line = '') =>
+  String(line || '')
+    .trim()
+    .replace(/^\|/, '')
+    .replace(/\|$/, '')
+    .split('|')
+    .map((cell) => cell.trim())
+
 const renderMarkdownContent = (content = '') => {
   const text = String(content || '').replace(/\r\n/g, '\n')
   if (!text.trim()) return null
@@ -122,13 +130,90 @@ const renderMarkdownContent = (content = '') => {
       continue
     }
 
+    const looksLikeTableHeader = line.includes('|')
+    const nextLine = lines[lineIndex + 1] || ''
+    const looksLikeTableDivider = /^\s*\|?\s*[:\-]+(?:\s*\|\s*[:\-]+)+\s*\|?\s*$/.test(nextLine)
+
+    if (looksLikeTableHeader && looksLikeTableDivider) {
+      const headerCells = normalizeTableRow(line)
+      lineIndex += 2
+      const bodyRows = []
+
+      while (lineIndex < lines.length) {
+        const rowLine = String(lines[lineIndex] || '')
+        if (!rowLine.includes('|') || !rowLine.trim()) break
+        bodyRows.push(normalizeTableRow(rowLine))
+        lineIndex += 1
+      }
+
+      const columnCount = headerCells.length
+      blocks.push(
+        <div className="ai-md-table-wrap" key={`md-${blockKey}`}>
+          <table className="ai-md-table">
+            <thead>
+              <tr>
+                {headerCells.map((cell, idx) => (
+                  <th key={`md-${blockKey}-h-${idx}`}>{renderInlineMarkdown(cell, `md-${blockKey}-h-${idx}`)}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {bodyRows.map((row, rowIdx) => (
+                <tr key={`md-${blockKey}-r-${rowIdx}`}>
+                  {Array.from({ length: columnCount }).map((_, colIdx) => (
+                    <td key={`md-${blockKey}-c-${rowIdx}-${colIdx}`}>
+                      {renderInlineMarkdown(row[colIdx] || '', `md-${blockKey}-c-${rowIdx}-${colIdx}`)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>,
+      )
+      blockKey += 1
+      continue
+    }
+
+    const listItemMatch = trimmed.match(/^([-*+]|\d+\.)\s+(.+)$/)
+    if (listItemMatch) {
+      const isOrdered = /\d+\./.test(listItemMatch[1])
+      const items = []
+
+      while (lineIndex < lines.length) {
+        const candidate = String(lines[lineIndex] || '').trim()
+        const candidateMatch = candidate.match(/^([-*+]|\d+\.)\s+(.+)$/)
+        if (!candidateMatch) break
+
+        const candidateOrdered = /\d+\./.test(candidateMatch[1])
+        if (candidateOrdered !== isOrdered) break
+
+        items.push(candidateMatch[2])
+        lineIndex += 1
+      }
+
+      const listChildren = items.map((item, itemIndex) => (
+        <li key={`md-${blockKey}-li-${itemIndex}`}>{renderInlineMarkdown(item, `md-${blockKey}-li-${itemIndex}`)}</li>
+      ))
+
+      blocks.push(
+        isOrdered ? <ol key={`md-${blockKey}`}>{listChildren}</ol> : <ul key={`md-${blockKey}`}>{listChildren}</ul>,
+      )
+      blockKey += 1
+      continue
+    }
+
     const paragraphLines = [line]
     lineIndex += 1
 
     while (lineIndex < lines.length) {
       const next = String(lines[lineIndex] || '')
       const nextTrimmed = next.trim()
-      const startsSpecial = !nextTrimmed || nextTrimmed.startsWith('```') || /^(#{1,6})\s+/.test(nextTrimmed)
+      const startsSpecial =
+        !nextTrimmed ||
+        nextTrimmed.startsWith('```') ||
+        /^(#{1,6})\s+/.test(nextTrimmed) ||
+        /^([-*+]|\d+\.)\s+/.test(nextTrimmed)
       if (startsSpecial) break
       paragraphLines.push(next)
       lineIndex += 1
