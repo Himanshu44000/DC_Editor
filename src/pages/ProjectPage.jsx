@@ -20,6 +20,966 @@ const GHOST_SUGGESTION_DEBOUNCE_MS = 620
 const GHOST_CONTEXT_WINDOW_LINES = 30
 const GHOST_PROJECT_SUMMARY_MAX_FILES = 24
 
+const SNIPPET_LANGUAGE_IDS = ['javascript', 'typescript', 'html', 'css', 'json']
+const REACT_COMPONENT_NAME_SNIPPET = '${1:${TM_FILENAME_BASE/(.*)/${1:/pascalcase}/}}'
+const EMMET_HTML_SNIPPETS = [
+  {
+    prefix: 'div',
+    description: 'div element',
+    detail: 'Emmet Abbreviation',
+    body: '<div>${1}</div>$0',
+  },
+  {
+    prefix: 'span',
+    description: 'span element',
+    detail: 'Emmet Abbreviation',
+    body: '<span>${1}</span>$0',
+  },
+  {
+    prefix: 'p',
+    description: 'paragraph element',
+    detail: 'Emmet Abbreviation',
+    body: '<p>${1}</p>$0',
+  },
+  {
+    prefix: 'a',
+    description: 'anchor element',
+    detail: 'Emmet Abbreviation',
+    body: '<a href="${1:#}">${2:link}</a>$0',
+  },
+  {
+    prefix: 'img',
+    description: 'image element',
+    detail: 'Emmet Abbreviation',
+    body: '<img src="${1:}" alt="${2:}" />$0',
+  },
+  {
+    prefix: 'ul>li',
+    description: 'unordered list item',
+    detail: 'Emmet Abbreviation',
+    body: '<ul>\n  <li>${1}</li>\n</ul>$0',
+  },
+  {
+    prefix: 'ol>li',
+    description: 'ordered list item',
+    detail: 'Emmet Abbreviation',
+    body: '<ol>\n  <li>${1}</li>\n</ol>$0',
+  },
+  {
+    prefix: 'input:text',
+    description: 'text input',
+    detail: 'Emmet Abbreviation',
+    body: '<input type="text" name="${1:name}" id="${2:id}" />$0',
+  },
+  {
+    prefix: 'button',
+    description: 'button element',
+    detail: 'Emmet Abbreviation',
+    body: '<button type="button">${1:Button}</button>$0',
+  },
+  {
+    prefix: 'form',
+    description: 'form element',
+    detail: 'Emmet Abbreviation',
+    body: '<form action="${1:#}" method="${2:post}">${3}</form>$0',
+  },
+  {
+    prefix: 'label',
+    description: 'label element',
+    detail: 'Emmet Abbreviation',
+    body: '<label for="${1:input}">${2:Label}</label>$0',
+  },
+  {
+    prefix: 'textarea',
+    description: 'textarea element',
+    detail: 'Emmet Abbreviation',
+    body: '<textarea name="${1:name}" id="${2:id}" rows="${3:3}" cols="${4:50}"></textarea>$0',
+  },
+  {
+    prefix: 'select',
+    description: 'select dropdown',
+    detail: 'Emmet Abbreviation',
+    body: '<select name="${1:name}" id="${2:id}">\n  <option value="${3:value}">${4:option}</option>\n</select>$0',
+  },
+  {
+    prefix: 'input:checkbox',
+    description: 'checkbox input',
+    detail: 'Emmet Abbreviation',
+    body: '<input type="checkbox" name="${1:name}" id="${2:id}" />$0',
+  },
+  {
+    prefix: 'input:radio',
+    description: 'radio input',
+    detail: 'Emmet Abbreviation',
+    body: '<input type="radio" name="${1:name}" id="${2:id}" />$0',
+  },
+  {
+    prefix: 'input:email',
+    description: 'email input',
+    detail: 'Emmet Abbreviation',
+    body: '<input type="email" name="${1:name}" id="${2:id}" />$0',
+  },
+  {
+    prefix: 'input:password',
+    description: 'password input',
+    detail: 'Emmet Abbreviation',
+    body: '<input type="password" name="${1:name}" id="${2:id}" />$0',
+  },
+  {
+    prefix: 'script',
+    description: 'script tag',
+    detail: 'Emmet Abbreviation',
+    body: '<script src="${1:}"></script>$0',
+  },
+  {
+    prefix: 'link:css',
+    description: 'link CSS stylesheet',
+    detail: 'Emmet Abbreviation',
+    body: '<link rel="stylesheet" href="${1:}.css" />$0',
+  },
+]
+
+const EMMET_JSX_SNIPPETS = [
+  {
+    prefix: 'div',
+    description: 'div element',
+    detail: 'Emmet Abbreviation',
+    body: '<div>${1}</div>$0',
+  },
+  {
+    prefix: 'span',
+    description: 'span element',
+    detail: 'Emmet Abbreviation',
+    body: '<span>${1}</span>$0',
+  },
+  {
+    prefix: 'p',
+    description: 'paragraph element',
+    detail: 'Emmet Abbreviation',
+    body: '<p>${1}</p>$0',
+  },
+  {
+    prefix: 'a',
+    description: 'anchor element',
+    detail: 'Emmet Abbreviation',
+    body: '<a href="${1:#}">${2:link}</a>$0',
+  },
+  {
+    prefix: 'img',
+    description: 'image element',
+    detail: 'Emmet Abbreviation',
+    body: '<img src="${1:}" alt="${2:}" />$0',
+  },
+  {
+    prefix: 'input:text',
+    description: 'text input',
+    detail: 'Emmet Abbreviation',
+    body: '<input type="text" name="${1:name}" id="${2:id}" />$0',
+  },
+  {
+    prefix: 'button',
+    description: 'button element',
+    detail: 'Emmet Abbreviation',
+    body: '<button type="button">${1:Button}</button>$0',
+  },
+  {
+    prefix: 'form',
+    description: 'form element with React handler',
+    detail: 'Emmet Abbreviation',
+    body: '<form onSubmit={${1:handleSubmit}}>\n  ${2}\n</form>$0',
+  },
+  {
+    prefix: 'label',
+    description: 'label element for JSX',
+    detail: 'Emmet Abbreviation',
+    body: '<label htmlFor="${1:input}">${2:Label}</label>$0',
+  },
+  {
+    prefix: 'input:checkbox',
+    description: 'checkbox input',
+    detail: 'Emmet Abbreviation',
+    body: '<input type="checkbox" name="${1:name}" id="${2:id}" />$0',
+  },
+  {
+    prefix: 'input:email',
+    description: 'email input',
+    detail: 'Emmet Abbreviation',
+    body: '<input type="email" name="${1:name}" id="${2:id}" />$0',
+  },
+  {
+    prefix: 'textarea',
+    description: 'textarea element',
+    detail: 'Emmet Abbreviation',
+    body: '<textarea name="${1:name}" id="${2:id}" rows="${3:3}" cols="${4:50}"></textarea>$0',
+  },
+  {
+    prefix: 'section',
+    description: 'section element',
+    detail: 'Emmet Abbreviation',
+    body: '<section>${1}</section>$0',
+  },
+  {
+    prefix: 'main',
+    description: 'main element',
+    detail: 'Emmet Abbreviation',
+    body: '<main>${1}</main>$0',
+  },
+]
+
+const UNIVERSAL_SNIPPETS = {
+  javascript: [
+    {
+      prefix: 'clg',
+      description: 'Console log',
+      body: "console.log('${1:value}')",
+    },
+    {
+      prefix: 'fn',
+      description: 'Function declaration',
+      body: 'function ${1:name}(${2:params}) {\n  ${3:// code}\n}',
+    },
+    {
+      prefix: 'afn',
+      description: 'Arrow function',
+      body: 'const ${1:name} = (${2:params}) => {\n  ${3:// code}\n}',
+    },
+    {
+      prefix: 'tryc',
+      description: 'Try catch block',
+      body: 'try {\n  ${1:// code}\n} catch (${2:error}) {\n  console.error(${2:error})\n}',
+    },
+    {
+      prefix: 'arr',
+      description: 'Array literal',
+      body: '[${1}]',
+    },
+    {
+      prefix: 'obj',
+      description: 'Object literal',
+      body: '{\n  ${1:key}: ${2:value},\n}',
+    },
+    {
+      prefix: 'for',
+      description: 'For loop',
+      body: 'for (let ${1:i} = 0; ${1:i} < ${2:array}.length; ${1:i}++) {\n  ${3}\n}',
+    },
+    {
+      prefix: 'foreach',
+      description: 'forEach loop',
+      body: '${1:array}.forEach((${2:item}) => {\n  ${3}\n})',
+    },
+    {
+      prefix: 'while',
+      description: 'While loop',
+      body: 'while (${1:condition}) {\n  ${2:// code}\n}',
+    },
+    {
+      prefix: 'switch',
+      description: 'Switch case',
+      body: 'switch (${1:value}) {\n  case ${2:case}:\n    ${3:// code}\n    break\n  default:\n    ${4}\n}',
+    },
+    {
+      prefix: 'const',
+      description: 'Const variable',
+      body: 'const ${1:name} = ${2:value}',
+    },
+    {
+      prefix: 'let',
+      description: 'Let variable',
+      body: 'let ${1:name} = ${2:value}',
+    },
+    {
+      prefix: 'ifelse',
+      description: 'If else block',
+      body: 'if (${1:condition}) {\n  ${2:// code}\n} else {\n  ${3:// code}\n}',
+    },
+    {
+      prefix: 'async',
+      description: 'Async function',
+      body: 'async function ${1:name}(${2:params}) {\n  ${3:// code}\n}',
+    },
+    {
+      prefix: 'aw',
+      description: 'Await expression',
+      body: 'await ${1:promise}',
+    },
+  ],
+  typescript: [
+    {
+      prefix: 'clg',
+      description: 'Console log',
+      body: "console.log('${1:value}')",
+    },
+    {
+      prefix: 'fn',
+      description: 'Typed function declaration',
+      body: 'function ${1:name}(${2:params}): ${3:void} {\n  ${4:// code}\n}',
+    },
+    {
+      prefix: 'afn',
+      description: 'Typed arrow function',
+      body: 'const ${1:name} = (${2:params}): ${3:void} => {\n  ${4:// code}\n}',
+    },
+    {
+      prefix: 'itype',
+      description: 'Interface declaration',
+      body: 'interface ${1:Name} {\n  ${2:key}: ${3:string}\n}',
+    },
+    {
+      prefix: 'type',
+      description: 'Type alias',
+      body: 'type ${1:Name} = {\n  ${2:key}: ${3:string}\n}',
+    },
+    {
+      prefix: 'arr',
+      description: 'Array literal',
+      body: '[${1}] as ${2:Type}[]',
+    },
+    {
+      prefix: 'obj',
+      description: 'Typed object literal',
+      body: 'const ${1:obj}: ${2:Type} = {\n  ${3:key}: ${4:value},\n}',
+    },
+    {
+      prefix: 'for',
+      description: 'For loop',
+      body: 'for (let ${1:i} = 0; ${1:i} < ${2:array}.length; ${1:i}++) {\n  ${3}\n}',
+    },
+    {
+      prefix: 'foreach',
+      description: 'forEach loop',
+      body: '${1:array}.forEach((${2:item}) => {\n  ${3}\n})',
+    },
+    {
+      prefix: 'async',
+      description: 'Async function',
+      body: 'async function ${1:name}(${2:params}): Promise<${3:void}> {\n  ${4:// code}\n}',
+    },
+    {
+      prefix: 'aw',
+      description: 'Await expression',
+      body: 'await ${1:promise}',
+    },
+  ],
+  html: [
+    {
+      prefix: '!',
+      description: 'HTML5 boilerplate',
+      detail: 'Emmet Abbreviation',
+      body:
+        '<!DOCTYPE html>\n<html lang="en">\n<head>\n  <meta charset="UTF-8" />\n  <meta name="viewport" content="width=device-width, initial-scale=1.0" />\n  <title>${1:Document}</title>\n</head>\n<body>\n  ${2}\n</body>\n</html>',
+    },
+  ],
+  css: [
+    {
+      prefix: 'center',
+      description: 'Center with flexbox',
+      body: 'display: flex;\nalign-items: center;\njustify-content: center;',
+    },
+  ],
+  json: [
+    {
+      prefix: 'pkgscripts',
+      description: 'package.json scripts block',
+      body: '"scripts": {\n  "dev": "${1:vite}",\n  "build": "${2:vite build}",\n  "start": "${3:node index.js}"\n}',
+    },
+  ],
+}
+
+const TEMPLATE_SNIPPETS = {
+  react: {
+    javascript: [
+      {
+        prefix: 'rafc',
+        description: 'React arrow function component',
+        detail: 'reactArrowFunctionComponent',
+        body:
+          `import React from 'react'\n\nconst ${REACT_COMPONENT_NAME_SNIPPET} = () => {\n  return (\n    <div>$1</div>\n  )\n}\n\n$0`,
+      },
+      {
+        prefix: 'rafce',
+        description: 'React arrow function component export',
+        detail: 'reactArrowFunctionExportComponent',
+        body:
+          `import React from 'react'\n\nconst ${REACT_COMPONENT_NAME_SNIPPET} = () => {\n  return (\n    <div>$1</div>\n  )\n}\n\nexport default $1\n$0`,
+      },
+      {
+        prefix: 'rafcp',
+        description: 'React arrow function component with PropTypes',
+        detail: 'reactArrowFunctionComponentWithPropTypes',
+        body:
+          `import React from 'react'\nimport PropTypes from 'prop-types'\n\nconst ${REACT_COMPONENT_NAME_SNIPPET} = (props) => {\n  return (\n    <div>$1</div>\n  )\n}\n\n$1.propTypes = {\n  \${2:value}: PropTypes.\${3:string},\n}\n\nexport default $1\n$0`,
+      },
+      {
+        prefix: 'rfc',
+        description: 'React function component',
+        detail: 'reactFunctionComponent',
+        body: `import React from 'react'\n\nfunction ${REACT_COMPONENT_NAME_SNIPPET}() {\n  return (\n    <div>$1</div>\n  )\n}\n\nexport default $1\n$0`,
+      },
+      {
+        prefix: 'usest',
+        description: 'useState hook',
+        body: "const [${1:state}, set${2:State}] = useState(${3:null})",
+      },
+      {
+        prefix: 'uef',
+        description: 'useEffect hook',
+        body: 'useEffect(() => {\n  ${1:// effect}\n\n  return () => {\n    ${2:// cleanup}\n  }\n}, [${3}])',
+      },
+      {
+        prefix: 'ucb',
+        description: 'useCallback hook',
+        body: 'const ${1:handler} = useCallback(() => {\n  ${2:// code}\n}, [${3}])',
+      },
+      {
+        prefix: 'umemo',
+        description: 'useMemo hook',
+        body: 'const ${1:value} = useMemo(() => {\n  ${2:return computedValue}\n}, [${3}])',
+      },
+      {
+        prefix: 'uref',
+        description: 'useRef hook',
+        body: 'const ${1:refName} = useRef(${2:null})',
+      },
+      {
+        prefix: 'imr',
+        description: 'Import React',
+        body: "import React from 'react'",
+      },
+      {
+        prefix: 'imrs',
+        description: 'Import React and useState',
+        body: "import React, { useState } from 'react'",
+      },
+      {
+        prefix: 'imrse',
+        description: 'Import React, useState, useEffect',
+        body: "import React, { useEffect, useState } from 'react'",
+      },
+      {
+        prefix: 'props',
+        description: 'Destructure props in component',
+        body: 'const { ${1} } = props',
+      },
+      {
+        prefix: 'context',
+        description: 'React context',
+        body:
+          "import { createContext, useContext } from 'react'\n\nconst ${1:App}Context = createContext(${2:null})\n\nexport const use${1:App}Context = () => useContext(${1:App}Context)",
+      },
+      {
+        prefix: 'redu',
+        description: 'useReducer hook',
+        body:
+          'const [state, dispatch] = useReducer((${1:state}, ${2:action}) => {\n  switch (${2:action}.type) {\n    case ${3:\'SET_VALUE\'}:\n      return { ...${1:state}, ${4:value}: ${2:action}.payload }\n    default:\n      return ${1:state}\n  }\n}, ${5:initialState})',
+      },
+      {
+        prefix: 'mapjsx',
+        description: 'Array map in JSX',
+        body: '{${1:items}.map((${2:item}) => (\n  <${3:div} key={${2:item}.${4:id}}>${5}</${3:div}>\n))}',
+      },
+      {
+        prefix: 'cc',
+        description: 'Class component',
+        detail: 'reactClassComponent',
+        body: `import React from 'react'\n\nclass ${REACT_COMPONENT_NAME_SNIPPET} extends React.Component {\n  render() {\n    return (\n      <div>$1</div>\n    )\n  }\n}\n\nexport default ${REACT_COMPONENT_NAME_SNIPPET}\n$0`,
+      },
+      {
+        prefix: 'export',
+        description: 'Export default',
+        body: 'export default ${1:component}',
+      },
+      {
+        prefix: 'ternary',
+        description: 'Ternary operator in JSX',
+        body: '{${1:condition} ? <${2:div}>${3}</${2:div}> : <${4:div}>${5}</${4:div}>}',
+      },
+      {
+        prefix: 'conditional',
+        description: 'Conditional rendering',
+        body: '{${1:condition} && <${2:div}>${3}</${2:div}>}',
+      },
+    ],
+    typescript: [
+      {
+        prefix: 'rafc',
+        description: 'React TS arrow function component',
+        detail: 'reactArrowFunctionComponent',
+        body:
+          `import React from 'react'\n\nconst ${REACT_COMPONENT_NAME_SNIPPET} = () => {\n  return (\n    <div>$1</div>\n  )\n}\n\n$0`,
+      },
+      {
+        prefix: 'rafce',
+        description: 'React TS arrow function component export',
+        detail: 'reactArrowFunctionExportComponent',
+        body:
+          `import React from 'react'\n\nconst ${REACT_COMPONENT_NAME_SNIPPET} = () => {\n  return (\n    <div>$1</div>\n  )\n}\n\nexport default $1\n$0`,
+      },
+      {
+        prefix: 'uset',
+        description: 'Typed useState hook',
+        body: "const [${1:state}, set${2:State}] = useState<${3:string}>(${4:''})",
+      },
+      {
+        prefix: 'uef',
+        description: 'useEffect hook',
+        body: 'useEffect(() => {\n  ${1:// effect}\n\n  return () => {\n    ${2:// cleanup}\n  }\n}, [${3}])',
+      },
+      {
+        prefix: 'ucb',
+        description: 'Typed useCallback hook',
+        body: 'const ${1:handler} = useCallback((): ${2:void} => {\n  ${3:// code}\n}, [${4}])',
+      },
+      {
+        prefix: 'umemo',
+        description: 'Typed useMemo hook',
+        body: 'const ${1:value} = useMemo<${2:string}>(() => {\n  ${3:return computedValue}\n}, [${4}])',
+      },
+      {
+        prefix: 'imr',
+        description: 'Import React',
+        body: "import React from 'react'",
+      },
+      {
+        prefix: 'imrse',
+        description: 'Import React, useState, useEffect',
+        body: "import React, { useEffect, useState } from 'react'",
+      },
+      {
+        prefix: 'usetype',
+        description: 'Type alias',
+        body: 'type ${1:Name} = {\n  ${2:key}: ${3:string}\n}',
+      },
+      {
+        prefix: 'iface',
+        description: 'Interface props block',
+        body: 'interface ${1:Name}Props {\n  ${2:key}: ${3:string}\n}',
+      },
+      {
+        prefix: 'context',
+        description: 'Typed React context',
+        body:
+          "type ${1:App}ContextValue = {\n  ${2:value}: ${3:string}\n}\n\nconst ${1:App}Context = createContext<${1:App}ContextValue | null>(null)\n\nexport const use${1:App}Context = () => {\n  const context = useContext(${1:App}Context)\n  if (!context) throw new Error('${1:App}Context missing provider')\n  return context\n}",
+      },
+      {
+        prefix: 'redu',
+        description: 'Typed useReducer hook',
+        body:
+          'type ${1:Action} = { type: ${2:\'SET_VALUE\'}; payload: ${3:string} }\n\nconst [state, dispatch] = useReducer((${4:state}: ${5:State}, action: ${1:Action}) => {\n  switch (action.type) {\n    case ${2:\'SET_VALUE\'}:\n      return { ...${4:state}, ${6:value}: action.payload }\n    default:\n      return ${4:state}\n  }\n}, ${7:initialState})',
+      },
+      {
+        prefix: 'mapjsx',
+        description: 'Typed array map in JSX',
+        body: '{${1:items}.map((${2:item}) => (\n  <${3:div} key={${2:item}.${4:id}}>${5}</${3:div}>\n))}',
+      },
+      {
+        prefix: 'ternary',
+        description: 'Ternary operator in JSX',
+        body: '{${1:condition} ? <${2:div}>${3}</${2:div}> : <${4:div}>${5}</${4:div}>}',
+      },
+      {
+        prefix: 'conditional',
+        description: 'Conditional rendering',
+        body: '{${1:condition} && <${2:div}>${3}</${2:div}>}',
+      },
+      {
+        prefix: 'export',
+        description: 'Export default',
+        body: 'export default ${1:component}',
+      },
+    ],
+  },
+  vue: {
+    html: [
+      {
+        prefix: 'vbase',
+        description: 'Vue SFC with script setup',
+        body:
+          '<script setup${1: lang="ts"}>\n${2}\n</script>\n\n<template>\n  <div class="${3:container}">\n    ${4}\n  </div>\n</template>\n\n<style scoped>\n.${3:container} {\n  ${5}\n}\n</style>',
+      },
+    ],
+    javascript: [
+      {
+        prefix: 'vref',
+        description: 'Vue ref()',
+        body: "const ${1:value} = ref(${2:null})",
+      },
+      {
+        prefix: 'vcomputed',
+        description: 'Vue computed()',
+        body: 'const ${1:computedValue} = computed(() => {\n  ${2:return value}\n})',
+      },
+      {
+        prefix: 'vwatch',
+        description: 'Vue watch()',
+        body: 'watch(() => ${1:source}, (${2:newValue}) => {\n  ${3:// code}\n})',
+      },
+      {
+        prefix: 'vonmounted',
+        description: 'Vue onMounted()',
+        body: 'onMounted(() => {\n  ${1:// code}\n})',
+      },
+      {
+        prefix: 'vemit',
+        description: 'Vue defineEmits()',
+        body: "const emit = defineEmits(['${1:submit}'])",
+      },
+      {
+        prefix: 'vprops',
+        description: 'Vue defineProps()',
+        body: 'const props = defineProps({\n  ${1:title}: {\n    type: ${2:String},\n    required: ${3:true},\n  },\n})',
+      },
+      {
+        prefix: 'vonunmounted',
+        description: 'Vue onUnmounted()',
+        body: 'onUnmounted(() => {\n  ${1:// code}\n})',
+      },
+      {
+        prefix: 'vonerror',
+        description: 'Vue onErrorCaptured()',
+        body: 'onErrorCaptured((err) => {\n  ${1:// code}\n})',
+      },
+    ],
+    typescript: [
+      {
+        prefix: 'vref',
+        description: 'Typed Vue ref()',
+        body: 'const ${1:value} = ref<${2:string}>(${3:""})',
+      },
+      {
+        prefix: 'vcomputed',
+        description: 'Vue computed()',
+        body: 'const ${1:computedValue} = computed<${2:string}>(() => {\n  ${3:return value}\n})',
+      },
+      {
+        prefix: 'vprops',
+        description: 'Typed Vue defineProps()',
+        body: 'type ${1:Props} = {\n  ${2:title}: ${3:string}\n}\n\nconst props = defineProps<${1:Props}>()',
+      },
+      {
+        prefix: 'vemit',
+        description: 'Typed Vue defineEmits()',
+        body: 'const emit = defineEmits<{\n  (${1:event}: ${2:\'submit\'}, ${3:payload}: ${4:string}): void\n}>()',
+      },
+      {
+        prefix: 'vonmounted',
+        description: 'Vue onMounted()',
+        body: 'onMounted(() => {\n  ${1:// code}\n})',
+      },
+      {
+        prefix: 'vwatch',
+        description: 'Vue watch()',
+        body: 'watch(() => ${1:source}, (${2:newValue}) => {\n  ${3:// code}\n})',
+      },
+      {
+        prefix: 'vonunmounted',
+        description: 'Vue onUnmounted()',
+        body: 'onUnmounted(() => {\n  ${1:// code}\n})',
+      },
+      {
+        prefix: 'vonerror',
+        description: 'Vue onErrorCaptured()',
+        body: 'onErrorCaptured((err) => {\n  ${1:// code}\n})',
+      },
+    ],
+  },
+  nodeExpress: {
+    javascript: [
+      {
+        prefix: 'exproute',
+        description: 'Express route handler',
+        body: "router.${1|get,get|post|put|patch|delete|}('${2:/path}', async (req, res) => {\n  ${3:res.json({ ok: true })}\n})",
+      },
+      {
+        prefix: 'expmw',
+        description: 'Express middleware',
+        body: 'const ${1:middlewareName} = (req, res, next) => {\n  ${2:// code}\n  next()\n}\n\nexport default ${1:middlewareName}',
+      },
+      {
+        prefix: 'expserver',
+        description: 'Express app bootstrap',
+        body:
+          "import express from 'express'\n\nconst app = express()\n\napp.use(express.json())\n\napp.get('${1:/}', (_req, res) => {\n  res.json({ ok: true })\n})\n\napp.listen(${2:3000}, () => {\n  console.log('Server running on port ${2:3000}')\n})",
+      },
+      {
+        prefix: 'expasync',
+        description: 'Async Express handler',
+        body: 'const ${1:handler} = async (req, res) => {\n  try {\n    ${2:res.json({ ok: true })}\n  } catch (${3:error}) {\n    res.status(500).json({ message: ${3:error}.message })\n  }\n}',
+      },
+      {
+        prefix: 'expmodel',
+        description: 'Simple module export',
+        body: 'export const ${1:name} = {\n  ${2:key}: ${3:value},\n}',
+      },
+      {
+        prefix: 'imdc',
+        description: 'Import/require module',
+        body: "const ${1:module} = require('${2:module-name}')",
+      },
+      {
+        prefix: 'expjson',
+        description: 'Express JSON response',
+        body: 'res.json({ ${1:key}: ${2:value} })',
+      },
+    ],
+    typescript: [
+      {
+        prefix: 'exproute',
+        description: 'Express typed route handler',
+        body:
+          "router.${1|get,get|post|put|patch|delete|}('${2:/path}', async (req: Request, res: Response) => {\n  ${3:res.json({ ok: true })}\n})",
+      },
+      {
+        prefix: 'expctrl',
+        description: 'Express controller function',
+        body: 'export const ${1:controllerName} = async (req: Request, res: Response): Promise<void> => {\n  ${2:res.json({ ok: true })}\n}',
+      },
+      {
+        prefix: 'expmw',
+        description: 'Typed Express middleware',
+        body: 'export const ${1:middlewareName} = (req: Request, res: Response, next: NextFunction): void => {\n  ${2:// code}\n  next()\n}',
+      },
+      {
+        prefix: 'expserver',
+        description: 'Typed Express app bootstrap',
+        body:
+          "import express from 'express'\n\nconst app = express()\n\napp.use(express.json())\n\napp.get('${1:/}', (_req, res) => {\n  res.json({ ok: true })\n})\n\napp.listen(${2:3000}, () => {\n  console.log('Server running on port ${2:3000}')\n})",
+      },
+      {
+        prefix: 'exptype',
+        description: 'API response type',
+        body: 'type ${1:ApiResponse} = {\n  ok: boolean\n  ${2:data}?: ${3:string}\n  ${4:message}?: string\n}',
+      },
+      {
+        prefix: 'imdc',
+        description: 'Import module',
+        body: "import ${1:module} from '${2:module-name}'",
+      },
+      {
+        prefix: 'expjson',
+        description: 'Express JSON response',
+        body: 'res.json({ ${1:key}: ${2:value} })',
+      },
+    ],
+  },
+}
+
+const resolveSnippetTemplateKey = (templateId = '') => {
+  const normalized = String(templateId || '').trim().toLowerCase()
+  if (!normalized) return ''
+  if (normalized === 'react-vite' || normalized === 'react-ts-tailwind' || normalized === 'nextjs-app') return 'react'
+  if (normalized === 'vue-vite') return 'vue'
+  if (normalized === 'node-express') return 'nodeExpress'
+  return ''
+}
+
+const buildSnippetEntriesForContext = ({ languageId, templateId, projectType, filePath }) => {
+  const normalizedProjectType = String(projectType || '').trim().toLowerCase()
+  if (normalizedProjectType === 'practice') {
+    // DSA/practice mode intentionally stays distraction-free in phase 1.
+    return []
+  }
+
+  const normalizedLanguage = String(languageId || '').trim().toLowerCase()
+  const normalizedPath = normalizePath(filePath || '').toLowerCase()
+  const templateKey = resolveSnippetTemplateKey(templateId)
+  const templateBundle = TEMPLATE_SNIPPETS[templateKey] || {}
+
+  const entries = []
+  if (Array.isArray(UNIVERSAL_SNIPPETS[normalizedLanguage])) {
+    entries.push(...UNIVERSAL_SNIPPETS[normalizedLanguage])
+  }
+
+  const isJsxLikeFile = normalizedPath.endsWith('.jsx') || normalizedPath.endsWith('.tsx')
+  if (isJsxLikeFile && (normalizedLanguage === 'javascript' || normalizedLanguage === 'typescript')) {
+    // VS Code users expect Emmet-style ! boilerplate while editing JSX/TSX files too.
+    entries.push(...(UNIVERSAL_SNIPPETS.html || []))
+    entries.push(...EMMET_JSX_SNIPPETS)
+  }
+
+  if (normalizedLanguage === 'html') {
+    entries.push(...EMMET_HTML_SNIPPETS)
+  }
+
+  if (Array.isArray(templateBundle[normalizedLanguage])) {
+    entries.push(...templateBundle[normalizedLanguage])
+  }
+
+  if (templateKey === 'vue' && normalizedLanguage === 'html' && normalizedPath.endsWith('.vue')) {
+    entries.push(...(templateBundle.html || []))
+  }
+
+  const deduped = new Map()
+  for (const entry of entries) {
+    const key = `${String(entry?.prefix || '').trim()}::${String(entry?.description || '').trim()}`
+    if (!key || deduped.has(key)) continue
+    deduped.set(key, entry)
+  }
+
+  return Array.from(deduped.values())
+}
+
+const rankSnippetEntries = (entries = [], typedWord = '') => {
+  const normalizedTypedWord = String(typedWord || '').trim().toLowerCase()
+  const source = Array.isArray(entries) ? entries : []
+
+  if (!normalizedTypedWord) {
+    return [...source].sort((a, b) => String(a?.prefix || '').localeCompare(String(b?.prefix || '')))
+  }
+
+  const exactMatches = []
+  const startsWithMatches = []
+  const includesMatches = []
+
+  for (const entry of source) {
+    const prefix = String(entry?.prefix || '').trim()
+    if (!prefix) continue
+    const normalizedPrefix = prefix.toLowerCase()
+
+    if (normalizedPrefix === normalizedTypedWord) {
+      exactMatches.push(entry)
+      continue
+    }
+
+    if (normalizedPrefix.startsWith(normalizedTypedWord)) {
+      startsWithMatches.push(entry)
+      continue
+    }
+
+    if (normalizedPrefix.includes(normalizedTypedWord)) {
+      includesMatches.push(entry)
+    }
+  }
+
+  startsWithMatches.sort((a, b) => {
+    const aPrefix = String(a?.prefix || '')
+    const bPrefix = String(b?.prefix || '')
+    const aDiff = Math.abs(aPrefix.length - normalizedTypedWord.length)
+    const bDiff = Math.abs(bPrefix.length - normalizedTypedWord.length)
+    if (aDiff !== bDiff) return aDiff - bDiff
+    return aPrefix.localeCompare(bPrefix)
+  })
+
+  exactMatches.sort((a, b) => String(a?.prefix || '').localeCompare(String(b?.prefix || '')))
+  includesMatches.sort((a, b) => String(a?.prefix || '').localeCompare(String(b?.prefix || '')))
+
+  return [...exactMatches, ...startsWithMatches, ...includesMatches]
+}
+
+const extractSnippetQuery = (model, position) => {
+  const lineNumber = Number(position?.lineNumber || 1)
+  const column = Number(position?.column || 1)
+  const lineContent = String(model?.getLineContent?.(lineNumber) || '')
+  const linePrefix = lineContent.slice(0, Math.max(0, column - 1))
+  const tokenMatch = linePrefix.match(/([!#.\w:+>*-]+)$/)
+
+  if (tokenMatch?.[1]) {
+    const query = tokenMatch[1]
+    return {
+      query,
+      range: {
+        startLineNumber: lineNumber,
+        endLineNumber: lineNumber,
+        startColumn: column - query.length,
+        endColumn: column,
+      },
+    }
+  }
+
+  const word = model?.getWordUntilPosition?.(position) || { word: '', startColumn: column, endColumn: column }
+  return {
+    query: String(word.word || '').trim(),
+    range: {
+      startLineNumber: lineNumber,
+      endLineNumber: lineNumber,
+      startColumn: Number(word.startColumn || column),
+      endColumn: Number(word.endColumn || column),
+    },
+  }
+}
+
+const parseEmmetSegment = (segment = '') => {
+  let source = String(segment || '').trim()
+  if (!source) return null
+
+  let repeat = 1
+  const repeatMatch = source.match(/\*(\d+)$/)
+  if (repeatMatch?.[1]) {
+    repeat = Math.min(12, Math.max(1, Number(repeatMatch[1]) || 1))
+    source = source.slice(0, source.length - repeatMatch[0].length)
+  }
+
+  const idMatch = source.match(/#([A-Za-z_][\w-]*)/)
+  const classMatches = [...source.matchAll(/\.([A-Za-z_][\w-]*)/g)].map((match) => match[1])
+  const tagMatch = source.match(/^([A-Za-z][\w-]*)/)
+  const tag = String(tagMatch?.[1] || '').trim() || 'div'
+
+  if (!tag) return null
+  return {
+    tag,
+    id: idMatch?.[1] || '',
+    classes: classMatches,
+    repeat,
+  }
+}
+
+const buildEmmetSnippetBody = (abbreviation = '', { useJsxAttrs = false } = {}) => {
+  const text = String(abbreviation || '').trim()
+  if (!text || /[\s()[\]{}]/.test(text)) return ''
+
+  if (text === '!') {
+    return '<!DOCTYPE html>\n<html lang="en">\n<head>\n  <meta charset="UTF-8" />\n  <meta name="viewport" content="width=device-width, initial-scale=1.0" />\n  <title>${1:Document}</title>\n</head>\n<body>\n  ${2}\n</body>\n</html>\n$0'
+  }
+
+  const segments = text.split('>').map((part) => parseEmmetSegment(part)).filter(Boolean)
+  if (!segments.length) return ''
+
+  const indentUnit = '  '
+  const buildAttrs = (segment) => {
+    const attrs = []
+    if (segment.id) attrs.push(`id="${segment.id}"`)
+    if (segment.classes.length) {
+      const classKey = useJsxAttrs ? 'className' : 'class'
+      attrs.push(`${classKey}="${segment.classes.join(' ')}"`)
+    }
+    return attrs.length ? ` ${attrs.join(' ')}` : ''
+  }
+
+  const renderSegment = (index, depth) => {
+    const segment = segments[index]
+    if (!segment) return ''
+
+    const indent = indentUnit.repeat(depth)
+    const attrs = buildAttrs(segment)
+    const open = `<${segment.tag}${attrs}>`
+    const close = `</${segment.tag}>`
+    const isLeaf = index === segments.length - 1
+
+    if (isLeaf) {
+      if (segment.repeat > 1) {
+        const lines = []
+        for (let i = 0; i < segment.repeat; i += 1) {
+          const content = i === 0 ? '${1}' : ''
+          lines.push(`${indent}${open}${content}${close}`)
+        }
+        return lines.join('\n')
+      }
+      return `${indent}${open}${'${1}'}${close}`
+    }
+
+    const child = renderSegment(index + 1, depth + 1)
+    const count = Math.max(1, segment.repeat)
+    const blocks = []
+    for (let i = 0; i < count; i += 1) {
+      blocks.push(`${indent}${open}\n${child}\n${indent}${close}`)
+    }
+    return blocks.join('\n')
+  }
+
+  const body = renderSegment(0, 0)
+  return body ? `${body}\n$0` : ''
+}
+
 const isPascalCase = (value = '') => /^[A-Z][A-Za-z0-9_$]*$/.test(String(value || '').trim())
 
 const extractExportedSymbols = (source = '') => {
@@ -412,11 +1372,21 @@ const ProjectPage = () => {
   const debugHoverWidgetRef = useRef(null)
   const debugHoverDisposablesRef = useRef([])
   const debugHoverHideTimerRef = useRef(null)
+  const snippetTemplateIdRef = useRef('')
+  const snippetProjectTypeRef = useRef('')
+  const snippetActiveFilePathRef = useRef('')
 
   useEffect(() => {
     latestProjectIdRef.current = projectId
     latestTokenRef.current = token
   }, [projectId, token])
+
+  useEffect(() => {
+    snippetTemplateIdRef.current = String(project?.templateId || '').trim()
+    snippetProjectTypeRef.current = String(project?.projectType || '').trim().toLowerCase()
+    const activeFile = files.find((file) => file.id === selectedFileId)
+    snippetActiveFilePathRef.current = normalizePath(activeFile?.path || activeFile?.name || '')
+  }, [project?.templateId, project?.projectType, files, selectedFileId])
 
   const reportCollabIssue = useCallback((message, details) => {
     const issueKey = String(message || 'unknown')
@@ -1347,6 +2317,70 @@ const ProjectPage = () => {
       }),
     )
 
+    const snippetDisposables = SNIPPET_LANGUAGE_IDS.map((languageId) =>
+      monaco.languages.registerCompletionItemProvider(languageId, {
+        triggerCharacters: ['!', '.', '#', '>', ':', '*', '+'],
+        provideCompletionItems: (model, position) => {
+          const currentLanguage = String(model?.getLanguageId?.() || languageId)
+          const snippetQuery = extractSnippetQuery(model, position)
+          const typedWord = String(snippetQuery.query || '').trim()
+
+          const snippetEntries = buildSnippetEntriesForContext({
+            languageId: currentLanguage,
+            templateId: snippetTemplateIdRef.current,
+            projectType: snippetProjectTypeRef.current,
+            filePath: snippetActiveFilePathRef.current,
+          })
+
+          const normalizedFilePath = String(snippetActiveFilePathRef.current || '').toLowerCase()
+          const isJsxLikeFile = normalizedFilePath.endsWith('.jsx') || normalizedFilePath.endsWith('.tsx')
+          const emmetCandidateBody = buildEmmetSnippetBody(typedWord, {
+            useJsxAttrs: isJsxLikeFile,
+          })
+
+          const allSnippetEntries = [...snippetEntries]
+          const hasSamePrefixSnippet = allSnippetEntries.some(
+            (entry) => String(entry?.prefix || '').trim() === typedWord,
+          )
+
+          if (emmetCandidateBody && !hasSamePrefixSnippet) {
+            allSnippetEntries.unshift({
+              prefix: typedWord,
+              description: `Expand ${typedWord}`,
+              detail: 'Emmet Abbreviation',
+              body: emmetCandidateBody,
+            })
+          }
+
+          if (!allSnippetEntries.length) {
+            return { suggestions: [] }
+          }
+
+          const rankedSnippetEntries = rankSnippetEntries(allSnippetEntries, typedWord)
+          const limitedSnippetEntries = rankedSnippetEntries.slice(0, 24)
+
+          if (typedWord && limitedSnippetEntries.length === 0) {
+            return { suggestions: [] }
+          }
+
+          const suggestions = limitedSnippetEntries.map((entry, index) => ({
+            label: String(entry.prefix || '').trim(),
+            kind: monaco.languages.CompletionItemKind.Snippet,
+            insertText: String(entry.body || ''),
+            insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+            documentation: String(entry.description || ''),
+            detail: String(entry.detail || entry.description || 'Snippet'),
+            filterText: String(entry.prefix || '').trim(),
+            range: snippetQuery.range,
+            preselect: index === 0,
+            sortText: `0-${String(index).padStart(3, '0')}`,
+          }))
+
+          return { suggestions }
+        },
+      }),
+    )
+
     const fixLanguageIds = ['javascript', 'typescript']
     const codeActionDisposables = fixLanguageIds.map((languageId) =>
       monaco.languages.registerCodeActionProvider(languageId, {
@@ -1427,6 +2461,9 @@ const ProjectPage = () => {
     ghostInlineProviderDisposeRef.current = {
       dispose: () => {
         for (const disposable of providerDisposables) {
+          disposable?.dispose?.()
+        }
+        for (const disposable of snippetDisposables) {
           disposable?.dispose?.()
         }
         for (const disposable of codeActionDisposables) {
@@ -2877,6 +3914,9 @@ const ProjectPage = () => {
                 readOnly: !canEdit,
                 hover: { enabled: false },
                 inlineSuggest: { enabled: true },
+                snippetSuggestions: 'top',
+                tabCompletion: 'on',
+                acceptSuggestionOnEnter: 'on',
               }}
             />
           </div>
@@ -3013,6 +4053,9 @@ const ProjectPage = () => {
                 readOnly: !canEdit,
                 hover: { enabled: false },
                 inlineSuggest: { enabled: true },
+                snippetSuggestions: 'top',
+                tabCompletion: 'on',
+                acceptSuggestionOnEnter: 'on',
               }}
               onMount={(editor, monaco) => {
                 editorRef.current = editor

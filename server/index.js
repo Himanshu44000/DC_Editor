@@ -72,8 +72,8 @@ const GITHUB_OAUTH_CALLBACK_URL = String(process.env.GITHUB_OAUTH_CALLBACK_URL |
 const FRONTEND_BASE_URL = String(process.env.FRONTEND_BASE_URL || 'http://localhost:5173').trim()
 const GITHUB_DEFAULT_COMMIT_MESSAGE = 'Initial upload from DC Editor'
 const GEMINI_API_KEY = String(process.env.GEMINI_API_KEY || '').trim()
-const GEMINI_MODEL = String(process.env.GEMINI_MODEL || 'gemini-1.5-flash').trim()
-const GEMINI_DEFAULT_FALLBACK_MODELS = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemma-3-4b-it']
+const GEMINI_MODEL = String(process.env.GEMINI_MODEL || 'gemini-2.5-flash').trim()
+const GEMINI_DEFAULT_FALLBACK_MODELS = ['gemini-2.0-flash']
 const GEMINI_FALLBACK_MODELS = String(process.env.GEMINI_FALLBACK_MODELS || '')
   .split(',')
   .map((entry) => String(entry || '').trim())
@@ -4683,7 +4683,23 @@ const extractGeminiText = (payload) => {
     }
   }
 
-  return parts.join('').trim()
+  // Preserve model-provided spacing so streamed chunks do not collapse words.
+  return parts.join('')
+}
+
+const isLikelyCollapsedAiText = (value = '') => {
+  const text = String(value || '')
+  if (!text.trim()) return false
+  if (text.includes('```')) return false
+
+  const normalized = text.replace(/\s+/g, ' ').trim()
+  if (normalized.length < 120) return false
+
+  const whitespaceCount = (normalized.match(/\s/g) || []).length
+  const whitespaceRatio = whitespaceCount / Math.max(1, normalized.length)
+  const punctuationJoinCount = (normalized.match(/[,:;.!?][A-Za-z0-9]/g) || []).length
+
+  return whitespaceRatio < 0.04 && punctuationJoinCount >= 2
 }
 
 const delay = (ms = 0) => new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)))
@@ -5055,7 +5071,7 @@ const callGeminiGenerate = async (historyMessages, options = {}) => {
       }
 
       const text = extractGeminiText(payload)
-      if (!text) {
+      if (!String(text || '').trim()) {
         lastError = new Error(`Gemini returned an empty response [model: ${modelName}]`)
         break
       }
@@ -6851,6 +6867,22 @@ app.post('/api/projects/:projectId/ai/conversations/:conversationId/stream', aut
           res.end()
         }
         return
+      }
+    }
+
+    if (isLikelyCollapsedAiText(assistantText)) {
+      try {
+        const recoveredText = await callGeminiGenerate(geminiHistory, {
+          temperature: 0.2,
+          maxOutputTokens: 2048,
+        })
+
+        if (String(recoveredText || '').trim() && !isLikelyCollapsedAiText(recoveredText)) {
+          assistantText = recoveredText
+          sendEvent({ type: 'replace', content: assistantText })
+        }
+      } catch {
+        // Keep streamed text if recovery attempt fails.
       }
     }
 

@@ -638,19 +638,21 @@ const AIAssistantPanel = ({
       let accumulatedAssistantText = ''
       let sawFirstChunk = false
 
-      while (true) {
-        const { value, done } = await reader.read()
-        if (done) break
-
-        buffer += decoder.decode(value, { stream: true })
-        const blocks = buffer.split('\n\n')
+      const consumeSseBlocks = (flushRemainder = false) => {
+        const normalized = buffer.replace(/\r\n/g, '\n')
+        const blocks = normalized.split('\n\n')
         buffer = blocks.pop() || ''
+
+        if (flushRemainder && buffer.trim()) {
+          blocks.push(buffer)
+          buffer = ''
+        }
 
         for (const block of blocks) {
           const dataLines = block
             .split('\n')
-            .filter((line) => line.startsWith('data: '))
-            .map((line) => line.slice(6))
+            .filter((line) => line.startsWith('data:'))
+            .map((line) => line.replace(/^data:\s?/, ''))
 
           for (const line of dataLines) {
             let payload = null
@@ -667,6 +669,24 @@ const AIAssistantPanel = ({
                 setResponsePhase('streaming')
               }
               accumulatedAssistantText += String(payload.chunk || '')
+              setMessages((prev) =>
+                prev.map((entry) =>
+                  entry.id === assistantLocalId
+                    ? {
+                        ...entry,
+                        content: accumulatedAssistantText,
+                      }
+                    : entry,
+                ),
+              )
+            }
+
+            if (payload.type === 'replace') {
+              accumulatedAssistantText = String(payload.content || '')
+              if (!sawFirstChunk) {
+                sawFirstChunk = true
+                setResponsePhase('streaming')
+              }
               setMessages((prev) =>
                 prev.map((entry) =>
                   entry.id === assistantLocalId
@@ -746,6 +766,18 @@ const AIAssistantPanel = ({
             }
           }
         }
+      }
+
+      while (true) {
+        const { value, done } = await reader.read()
+        if (done) {
+          buffer += decoder.decode()
+          consumeSseBlocks(true)
+          break
+        }
+
+        buffer += decoder.decode(value, { stream: true })
+        consumeSseBlocks(false)
       }
 
       setAttachments([])

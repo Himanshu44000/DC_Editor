@@ -428,15 +428,22 @@ const AIChatPopup = ({ projectId, getAuthToken, canUseAI, avatarSrc, selectedFil
       let buffer = ''
       let accumulatedText = ''
 
-      while (true) {
-        const { value, done } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        const blocks = buffer.split('\n\n')
+      const consumeSseBlocks = (flushRemainder = false) => {
+        const normalized = buffer.replace(/\r\n/g, '\n')
+        const blocks = normalized.split('\n\n')
         buffer = blocks.pop() || ''
 
+        if (flushRemainder && buffer.trim()) {
+          blocks.push(buffer)
+          buffer = ''
+        }
+
         for (const block of blocks) {
-          const dataLines = block.split('\n').filter((line) => line.startsWith('data: ')).map((line) => line.slice(6))
+          const dataLines = block
+            .split('\n')
+            .filter((line) => line.startsWith('data:'))
+            .map((line) => line.replace(/^data:\s?/, ''))
+
           for (const line of dataLines) {
             let payload = null
             try { payload = JSON.parse(line) } catch { payload = null }
@@ -444,6 +451,20 @@ const AIChatPopup = ({ projectId, getAuthToken, canUseAI, avatarSrc, selectedFil
 
             if (payload.type === 'chunk') {
               accumulatedText += String(payload.chunk || '')
+              setMessages((prev) => {
+                let replaced = false
+                const next = prev.map((entry) => {
+                  if (entry.id !== assistantLocalId) return entry
+                  replaced = true
+                  return { ...entry, content: accumulatedText }
+                })
+                if (replaced) return next
+                return [...next, { id: assistantLocalId, role: 'assistant', content: accumulatedText, attachments: [] }]
+              })
+            }
+
+            if (payload.type === 'replace') {
+              accumulatedText = String(payload.content || '')
               setMessages((prev) => {
                 let replaced = false
                 const next = prev.map((entry) => {
@@ -475,6 +496,18 @@ const AIChatPopup = ({ projectId, getAuthToken, canUseAI, avatarSrc, selectedFil
             if (payload.type === 'error') throw new Error(payload.message || 'AI stream error')
           }
         }
+      }
+
+      while (true) {
+        const { value, done } = await reader.read()
+        if (done) {
+          buffer += decoder.decode()
+          consumeSseBlocks(true)
+          break
+        }
+
+        buffer += decoder.decode(value, { stream: true })
+        consumeSseBlocks(false)
       }
       try {
         const usageData = await apiRequest(`/projects/${projectId}/ai/usage`, {}, getAuthToken)
