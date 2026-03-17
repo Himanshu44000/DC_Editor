@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { apiRequest } from '../lib/api'
 import { useAuth } from '../context/AuthContext'
@@ -35,6 +35,42 @@ const DashboardPage = () => {
     repositoryName: '',
     isPrivate: true,
   })
+  const [isCreatingProject, setIsCreatingProject] = useState(false)
+  const [createProgressStep, setCreateProgressStep] = useState(0)
+  const createProgressTimersRef = useRef([])
+
+  const clearCreateProgressTimers = useCallback(() => {
+    for (const timerId of createProgressTimersRef.current) {
+      window.clearTimeout(timerId)
+    }
+    createProgressTimersRef.current = []
+  }, [])
+
+  const startCreateProgressDialog = useCallback(() => {
+    clearCreateProgressTimers()
+    setCreateProgressStep(0)
+    setIsCreatingProject(true)
+
+    const stepTwoTimer = window.setTimeout(() => {
+      setCreateProgressStep(1)
+    }, 900)
+
+    const stepThreeTimer = window.setTimeout(() => {
+      setCreateProgressStep(2)
+    }, 1800)
+
+    createProgressTimersRef.current = [stepTwoTimer, stepThreeTimer]
+  }, [clearCreateProgressTimers])
+
+  const stopCreateProgressDialog = useCallback(() => {
+    clearCreateProgressTimers()
+    setIsCreatingProject(false)
+    setCreateProgressStep(0)
+  }, [clearCreateProgressTimers])
+
+  useEffect(() => () => {
+    clearCreateProgressTimers()
+  }, [clearCreateProgressTimers])
 
   useEffect(() => {
     const loadTemplates = async () => {
@@ -148,9 +184,10 @@ const DashboardPage = () => {
 
   const createProject = async (event) => {
     event.preventDefault()
-    if (!token) return
+    if (!token || isCreatingProject) return
     setCreateError('')
     setError('')
+    startCreateProgressDialog()
     try {
       const data = await apiRequest(
         '/projects',
@@ -162,6 +199,7 @@ const DashboardPage = () => {
       )
       navigate(`/project/${data.project.id}`)
     } catch (createError) {
+      stopCreateProgressDialog()
       const message = String(createError?.message || 'Failed to create project')
       setCreateError(message)
     }
@@ -635,9 +673,10 @@ const DashboardPage = () => {
 
                 <button
                   type="submit"
+                  disabled={isCreatingProject}
                   className="dash-primary-btn mt-2 rounded-xl border border-zinc-900 bg-zinc-900 px-4 py-2.5 text-sm font-bold uppercase tracking-[0.11em] text-white transition hover:-translate-y-0.5 hover:bg-black dark:border-zinc-900 dark:bg-zinc-900 dark:text-white dark:hover:bg-black"
                 >
-                  Create Project
+                  {isCreatingProject ? 'Creating...' : 'Create Project'}
                 </button>
               </form>
             </div>
@@ -861,6 +900,36 @@ const DashboardPage = () => {
                 >
                   Cancel
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {isCreatingProject && (
+          <div className="fixed inset-0 grid place-items-center px-4" style={{ zIndex: 90 }} aria-live="polite" role="status">
+            <div className="absolute inset-0 bg-slate-950/45 backdrop-blur-md" />
+            <div className="relative w-full max-w-sm overflow-hidden rounded-2xl border border-slate-300/60 bg-white/85 p-6 text-slate-900 shadow-2xl shadow-slate-400/25 dark:border-slate-700/80 dark:bg-slate-900/88 dark:text-slate-100 dark:shadow-black/50">
+              <div
+                className="mx-auto h-9 w-full max-w-[270px] overflow-hidden"
+                style={{
+                  WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, black 20%, black 80%, transparent 100%)',
+                  maskImage: 'linear-gradient(to bottom, transparent 0%, black 20%, black 80%, transparent 100%)',
+                }}
+              >
+                <div
+                  className="transition-transform duration-500 ease-out"
+                  style={{ transform: `translateY(-${createProgressStep * 36}px)` }}
+                >
+                  <p className="m-0 flex h-9 items-center justify-center text-center text-lg font-semibold text-slate-800 dark:text-slate-100">Creating your project...</p>
+                  <p className="m-0 flex h-9 items-center justify-center text-center text-lg font-semibold text-slate-800 dark:text-slate-100">Setting up workspace...</p>
+                  <p className="m-0 flex h-9 items-center justify-center text-center text-lg font-semibold text-slate-800 dark:text-slate-100">Almost done...</p>
+                </div>
+              </div>
+
+              <div className="mt-4 flex items-center justify-center gap-1.5">
+                <span className={`h-1.5 w-1.5 rounded-full ${createProgressStep >= 0 ? 'bg-sky-500' : 'bg-slate-300 dark:bg-slate-700'}`} />
+                <span className={`h-1.5 w-1.5 rounded-full ${createProgressStep >= 1 ? 'bg-sky-500' : 'bg-slate-300 dark:bg-slate-700'}`} />
+                <span className={`h-1.5 w-1.5 rounded-full ${createProgressStep >= 2 ? 'bg-sky-500' : 'bg-slate-300 dark:bg-slate-700'}`} />
               </div>
             </div>
           </div>

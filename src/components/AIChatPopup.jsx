@@ -319,8 +319,13 @@ const AIChatPopup = ({ projectId, getAuthToken, canUseAI, avatarSrc, selectedFil
   }, [isExpanded, canUseAI, projectId, getAuthToken])
 
   useEffect(() => {
-    if (!isExpanded || !canUseAI || !projectId || !activeConversationId || viewMode !== 'chat') {
+    if (!isExpanded || !canUseAI || !projectId) {
       setMessages([])
+      setIsLoadingMessages(false)
+      return
+    }
+    if (!activeConversationId || viewMode !== 'chat') {
+      setIsLoadingMessages(false)
       return
     }
     let cancelled = false
@@ -329,7 +334,13 @@ const AIChatPopup = ({ projectId, getAuthToken, canUseAI, avatarSrc, selectedFil
       setError('')
       try {
         const data = await apiRequest(`/projects/${projectId}/ai/conversations/${activeConversationId}/messages`, {}, getAuthToken)
-        if (!cancelled) setMessages(Array.isArray(data.messages) ? data.messages : [])
+        if (!cancelled) {
+          setMessages((prev) => {
+            const hasLocalDraft = prev.some((entry) => String(entry?.id || '').startsWith('local-'))
+            if (hasLocalDraft) return prev
+            return Array.isArray(data.messages) ? data.messages : []
+          })
+        }
       } catch (messagesError) {
         if (!cancelled) setError(messagesError.message || 'Failed to load messages')
       } finally {
@@ -433,12 +444,29 @@ const AIChatPopup = ({ projectId, getAuthToken, canUseAI, avatarSrc, selectedFil
 
             if (payload.type === 'chunk') {
               accumulatedText += String(payload.chunk || '')
-              setMessages((prev) => prev.map((entry) => entry.id === assistantLocalId ? { ...entry, content: accumulatedText } : entry))
+              setMessages((prev) => {
+                let replaced = false
+                const next = prev.map((entry) => {
+                  if (entry.id !== assistantLocalId) return entry
+                  replaced = true
+                  return { ...entry, content: accumulatedText }
+                })
+                if (replaced) return next
+                return [...next, { id: assistantLocalId, role: 'assistant', content: accumulatedText, attachments: [] }]
+              })
             }
 
             if (payload.type === 'done' && payload.message?.id) {
               const serverAssistant = { ...payload.message, role: 'assistant', content: String(payload.message.content || accumulatedText), attachments: Array.isArray(payload.message.attachments) ? payload.message.attachments : [] }
-              setMessages((prev) => prev.map((entry) => (entry.id === assistantLocalId ? serverAssistant : entry)))
+              setMessages((prev) => {
+                let replaced = false
+                const next = prev.map((entry) => {
+                  if (entry.id !== assistantLocalId) return entry
+                  replaced = true
+                  return serverAssistant
+                })
+                return replaced ? next : [...next, serverAssistant]
+              })
               const nextTitle = String(payload.message?.conversationTitle || '').trim()
               if (nextTitle) {
                 setConversations((prev) => sortConversations(prev.map((entry) => entry.id === targetConversationId ? { ...entry, title: nextTitle, updatedAt: new Date().toISOString() } : entry)))
