@@ -78,12 +78,15 @@ const GEMINI_FALLBACK_MODELS = String(process.env.GEMINI_FALLBACK_MODELS || '')
   .split(',')
   .map((entry) => String(entry || '').trim())
   .filter(Boolean)
-const AI_MAX_HISTORY_MESSAGES = 30
+const AI_MAX_HISTORY_MESSAGES = Math.max(4, Number(process.env.AI_MAX_HISTORY_MESSAGES || 12))
 const AI_MAX_ATTACHMENT_COUNT = 5
 const AI_MAX_ATTACHMENT_TEXT_CHARS = 12000
 const AI_MAX_SELECTED_FILE_CHARS = 18000
-const AI_MAX_PROJECT_CONTEXT_CHARS = 120000
+const AI_MAX_PROJECT_CONTEXT_CHARS = Math.max(2000, Number(process.env.AI_MAX_PROJECT_CONTEXT_CHARS || 12000))
 const AI_MAX_PROJECT_FILE_CHARS = 6000
+const AI_CHAT_PROJECT_CONTEXT_MODE = String(process.env.AI_CHAT_PROJECT_CONTEXT_MODE || 'summary').trim().toLowerCase()
+const AI_MAX_PROJECT_INDEX_ENTRIES = Math.max(20, Number(process.env.AI_MAX_PROJECT_INDEX_ENTRIES || 250))
+const AI_MAX_PROJECT_INDEX_CHARS = Math.max(500, Number(process.env.AI_MAX_PROJECT_INDEX_CHARS || 6000))
 const AI_DEFAULT_CONVERSATION_TITLE = 'New conversation'
 const AI_CHAT_PROJECT_PROMPT_LIMIT = Math.max(1, Number(process.env.AI_CHAT_PROJECT_PROMPT_LIMIT || 10))
 const AI_GHOST_PER_MINUTE_LIMIT = Math.max(1, Number(process.env.AI_GHOST_PER_MINUTE_LIMIT || 20))
@@ -93,8 +96,8 @@ const AI_GHOST_MAX_CONTEXT_WINDOW_CHARS = Math.max(500, Number(process.env.AI_GH
 const AI_GHOST_MAX_PROJECT_SUMMARY_CHARS = Math.max(200, Number(process.env.AI_GHOST_MAX_PROJECT_SUMMARY_CHARS || 2000))
 const AI_GHOST_MAX_OUTPUT_TOKENS = Math.max(24, Number(process.env.AI_GHOST_MAX_OUTPUT_TOKENS || 120))
 const AI_GHOST_TEMPERATURE = Number(process.env.AI_GHOST_TEMPERATURE || 0.05)
-const GEMINI_RATE_LIMIT_MAX_RETRIES = Math.max(0, Number(process.env.GEMINI_RATE_LIMIT_MAX_RETRIES || 2))
-const GEMINI_RATE_LIMIT_MAX_WAIT_MS = Math.max(500, Number(process.env.GEMINI_RATE_LIMIT_MAX_WAIT_MS || 12000))
+const GEMINI_RATE_LIMIT_MAX_RETRIES = Math.max(0, Number(process.env.GEMINI_RATE_LIMIT_MAX_RETRIES || 1))
+const GEMINI_RATE_LIMIT_MAX_WAIT_MS = Math.max(500, Number(process.env.GEMINI_RATE_LIMIT_MAX_WAIT_MS || 2500))
 const AI_SYSTEM_INSTRUCTION = [
   'You are an AI coding assistant inside a collaborative web IDE.',
   'Prioritize practical, accurate, and secure guidance.',
@@ -4625,17 +4628,49 @@ const buildProjectContextBlock = async (project) => {
   return fileSections.join('\n\n')
 }
 
+const buildProjectFileIndexBlock = (project) => {
+  const sortedPaths = Array.from(project?.files?.values?.() || [])
+    .map((file) => String(file?.path || file?.name || '').trim())
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b))
+
+  if (!sortedPaths.length) return ''
+
+  const lines = []
+  let totalChars = 0
+
+  for (const filePath of sortedPaths) {
+    if (lines.length >= AI_MAX_PROJECT_INDEX_ENTRIES) break
+    const line = `- ${filePath}`
+    if (totalChars + line.length > AI_MAX_PROJECT_INDEX_CHARS) break
+    lines.push(line)
+    totalChars += line.length + 1
+  }
+
+  return lines.join('\n')
+}
+
 const buildPromptWithContext = async ({ messageText, project, attachments }) => {
   const sections = [sanitizeDbText(String(messageText || '').trim())]
 
   if (project) {
-    const projectContext = await buildProjectContextBlock(project)
-    sections.push(
-      [
-        'Project context (all available text files in workspace snapshot):',
-        projectContext || '(no text files found)',
-      ].join('\n'),
-    )
+    if (AI_CHAT_PROJECT_CONTEXT_MODE === 'full') {
+      const projectContext = await buildProjectContextBlock(project)
+      sections.push(
+        [
+          'Project context (all available text files in workspace snapshot):',
+          projectContext || '(no text files found)',
+        ].join('\n'),
+      )
+    } else if (AI_CHAT_PROJECT_CONTEXT_MODE === 'summary') {
+      const projectIndex = buildProjectFileIndexBlock(project)
+      sections.push(
+        [
+          'Project file index (use this to reference files when answering):',
+          projectIndex || '(no files found)',
+        ].join('\n'),
+      )
+    }
   }
 
   for (const attachment of attachments || []) {
@@ -4978,7 +5013,7 @@ const callGeminiGenerate = async (historyMessages, options = {}) => {
     : 0.25
   const maxOutputTokens = Number.isFinite(Number(options.maxOutputTokens))
     ? Math.max(24, Number(options.maxOutputTokens))
-    : 2048
+    : 1024
   const systemInstruction = String(options.systemInstruction || AI_SYSTEM_INSTRUCTION).trim() || AI_SYSTEM_INSTRUCTION
 
   const createRequestBody = (includeSystemInstruction = true) => ({
@@ -5012,6 +5047,7 @@ const callGeminiGenerate = async (historyMessages, options = {}) => {
   for (const modelName of orderedModels) {
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelName)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`
     let includeSystemInstruction = true
+    const hasAlternativeModel = modelName !== orderedModels[orderedModels.length - 1]
 
     for (let attempt = 0; attempt <= GEMINI_RATE_LIMIT_MAX_RETRIES; attempt += 1) {
       const response = await fetch(endpoint, {
@@ -5041,6 +5077,10 @@ const callGeminiGenerate = async (historyMessages, options = {}) => {
           includeSystemInstruction = false
           attempt -= 1
           continue
+        }
+
+        if (isRateLimit && hasAlternativeModel) {
+          break
         }
 
         if (isRateLimit && attempt < GEMINI_RATE_LIMIT_MAX_RETRIES) {
@@ -5089,7 +5129,7 @@ const callGeminiGenerateStream = async (historyMessages, options = {}) => {
     : 0.25
   const maxOutputTokens = Number.isFinite(Number(options.maxOutputTokens))
     ? Math.max(24, Number(options.maxOutputTokens))
-    : 2048
+    : 1024
   const systemInstruction = String(options.systemInstruction || AI_SYSTEM_INSTRUCTION).trim() || AI_SYSTEM_INSTRUCTION
   const onChunk = typeof options.onChunk === 'function' ? options.onChunk : () => {}
 
@@ -5124,6 +5164,7 @@ const callGeminiGenerateStream = async (historyMessages, options = {}) => {
   for (const modelName of orderedModels) {
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelName)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(GEMINI_API_KEY)}`
     let includeSystemInstruction = true
+    const hasAlternativeModel = modelName !== orderedModels[orderedModels.length - 1]
 
     for (let attempt = 0; attempt <= GEMINI_RATE_LIMIT_MAX_RETRIES; attempt += 1) {
       const response = await fetch(endpoint, {
@@ -5153,6 +5194,10 @@ const callGeminiGenerateStream = async (historyMessages, options = {}) => {
           includeSystemInstruction = false
           attempt -= 1
           continue
+        }
+
+        if (isRateLimit && hasAlternativeModel) {
+          break
         }
 
         if (isRateLimit && attempt < GEMINI_RATE_LIMIT_MAX_RETRIES) {

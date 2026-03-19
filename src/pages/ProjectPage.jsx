@@ -1375,6 +1375,9 @@ const ProjectPage = () => {
   const snippetTemplateIdRef = useRef('')
   const snippetProjectTypeRef = useRef('')
   const snippetActiveFilePathRef = useRef('')
+  const projectFilePathSetRef = useRef(new Set())
+  const dependencyNameSetRef = useRef(new Set(['react', 'react-dom']))
+  const selectedFilePathForCodeActionsRef = useRef('')
 
   useEffect(() => {
     latestProjectIdRef.current = projectId
@@ -1929,24 +1932,66 @@ const ProjectPage = () => {
     let activeMarker = null
     let isHoveringDebugBox = false
 
+    const focusActiveMarker = () => {
+      if (!activeMarker) return
+      const startLineNumber = Math.max(1, Number(activeMarker.startLineNumber || 1))
+      const startColumn = Math.max(1, Number(activeMarker.startColumn || 1))
+      const endLineNumber = Math.max(startLineNumber, Number(activeMarker.endLineNumber || startLineNumber))
+      const endColumn = Math.max(startColumn, Number(activeMarker.endColumn || startColumn))
+
+      editor.focus()
+      editor.setPosition({ lineNumber: startLineNumber, column: startColumn })
+      editor.setSelection({
+        startLineNumber,
+        startColumn,
+        endLineNumber,
+        endColumn,
+      })
+      editor.revealLineInCenter(startLineNumber)
+    }
+
     const viewProblemButton = makeActionButton('View Problem', () => {
       if (!activeMarker) return
-      editor.focus()
-      editor.setPosition({ lineNumber: activeMarker.startLineNumber, column: activeMarker.startColumn })
-      editor.revealLineInCenter(activeMarker.startLineNumber)
+      focusActiveMarker()
+      editor.trigger('debug-hover', 'editor.action.showHover', {})
     })
 
     const quickFixButton = makeActionButton('Quick Fix', () => {
-      editor.focus()
+      focusActiveMarker()
       editor.trigger('debug-hover', 'editor.action.quickFix', {})
     })
 
     const fixButton = makeActionButton('Fix', () => {
-      editor.focus()
+      focusActiveMarker()
       editor.trigger('debug-hover', 'editor.action.codeAction', {
         kind: 'quickfix',
         apply: 'first',
       })
+
+      // If no preferred fix applied, open the quick-fix picker as fallback.
+      window.setTimeout(() => {
+        if (!activeMarker) return
+        const model = editor.getModel()
+        if (!model) return
+
+        const stillHasMarker = monaco.editor
+          .getModelMarkers({ resource: model.uri })
+          .some((marker) => {
+            const sameSeverity = Number(marker.severity) === Number(monaco.MarkerSeverity.Error)
+            if (!sameSeverity) return false
+
+            const overlapsLine =
+              marker.startLineNumber <= activeMarker.endLineNumber && marker.endLineNumber >= activeMarker.startLineNumber
+            if (!overlapsLine) return false
+
+            const sameMessage = String(marker.message || '').trim() === String(activeMarker.message || '').trim()
+            return sameMessage
+          })
+
+        if (stillHasMarker) {
+          editor.trigger('debug-hover', 'editor.action.quickFix', {})
+        }
+      }, 100)
     })
 
     actionsRow.appendChild(viewProblemButton)
@@ -1958,12 +2003,21 @@ const ProjectPage = () => {
       getDomNode: () => widgetDom,
       getPosition: () => {
         if (!activeMarker) return null
+        const isTopRegion = Number(activeMarker.startLineNumber || 1) <= 6
         return {
           position: {
             lineNumber: Math.max(1, activeMarker.startLineNumber),
             column: Math.max(1, activeMarker.startColumn),
           },
-          preference: [monaco.editor.ContentWidgetPositionPreference.ABOVE],
+          preference: isTopRegion
+            ? [
+                monaco.editor.ContentWidgetPositionPreference.BELOW,
+                monaco.editor.ContentWidgetPositionPreference.ABOVE,
+              ]
+            : [
+                monaco.editor.ContentWidgetPositionPreference.ABOVE,
+                monaco.editor.ContentWidgetPositionPreference.BELOW,
+              ],
         }
       },
     }
@@ -2116,6 +2170,12 @@ const ProjectPage = () => {
 
     return deps
   }, [files])
+
+  useEffect(() => {
+    projectFilePathSetRef.current = new Set(projectFilePathSet)
+    dependencyNameSetRef.current = new Set(dependencyNameSet)
+    selectedFilePathForCodeActionsRef.current = normalizePath(selectedFile?.path || selectedFile?.name || '')
+  }, [projectFilePathSet, dependencyNameSet, selectedFile?.path, selectedFile?.name])
 
   const resolveImportPath = useCallback((fromPath, specifier) => {
     const normalizedFrom = normalizePath(fromPath || '')
@@ -2386,36 +2446,294 @@ const ProjectPage = () => {
       monaco.languages.registerCodeActionProvider(languageId, {
         provideCodeActions: (model, range, context) => {
           const actions = []
-          const markers = Array.isArray(context?.markers) ? context.markers : []
+          const providedMarkers = Array.isArray(context?.markers) ? context.markers : []
+          const modelMarkers = monaco.editor
+            .getModelMarkers({ resource: model.uri })
+            .filter((marker) => Number(marker.severity) === Number(monaco.MarkerSeverity.Error))
+
+          const rangeStartLine = Number(range?.startLineNumber || 1)
+          const rangeEndLine = Number(range?.endLineNumber || rangeStartLine)
+
+          const nearbyModelMarkers = modelMarkers.filter(
+            (marker) => marker.startLineNumber <= rangeEndLine + 1 && marker.endLineNumber >= rangeStartLine - 1,
+          )
+
+          const markers = providedMarkers.length > 0 ? providedMarkers : nearbyModelMarkers
+          const dedupeKeys = new Set()
+
+          const pushLineReplacementAction = ({ marker, lineNumber, title, nextLine, isPreferred = false }) => {
+            if (!marker || !title || typeof nextLine !== 'string') return
+            const key = `${lineNumber}:${title}:${nextLine}`
+            if (dedupeKeys.has(key)) return
+            dedupeKeys.add(key)
+
+            actions.push({
+              title,
+              kind: 'quickfix',
+              edit: {
+                edits: [
+                  {
+                    resource: model.uri,
+                    textEdit: {
+                      range: {
+                        startLineNumber: lineNumber,
+                        startColumn: 1,
+                        endLineNumber: lineNumber,
+                        endColumn: model.getLineMaxColumn(lineNumber),
+                      },
+                      text: nextLine,
+                    },
+                  },
+                ],
+              },
+              diagnostics: [marker],
+              isPreferred,
+            })
+          }
+
+          const normalizeReactEventName = (value = '') => {
+            const normalized = String(value || '').trim().toLowerCase()
+            if (!normalized.startsWith('on')) return ''
+
+            const eventMap = {
+              onclick: 'onClick',
+              onchange: 'onChange',
+              oninput: 'onInput',
+              onsubmit: 'onSubmit',
+              onkeydown: 'onKeyDown',
+              onkeyup: 'onKeyUp',
+              onkeypress: 'onKeyPress',
+              onfocus: 'onFocus',
+              onblur: 'onBlur',
+              onmousedown: 'onMouseDown',
+              onmouseup: 'onMouseUp',
+              onmouseenter: 'onMouseEnter',
+              onmouseleave: 'onMouseLeave',
+              onmousemove: 'onMouseMove',
+              onmouseover: 'onMouseOver',
+              onmouseout: 'onMouseOut',
+              ontouchstart: 'onTouchStart',
+              ontouchend: 'onTouchEnd',
+              ondragstart: 'onDragStart',
+              ondragend: 'onDragEnd',
+              oncontextmenu: 'onContextMenu',
+            }
+
+            return eventMap[normalized] || ''
+          }
+
+          const normalizeCommonJsxPropName = (value = '') => {
+            const normalized = String(value || '').trim().toLowerCase()
+            const propMap = {
+              tabindex: 'tabIndex',
+              readonly: 'readOnly',
+              maxlength: 'maxLength',
+              minlength: 'minLength',
+              autofocus: 'autoFocus',
+              autocomplete: 'autoComplete',
+              spellcheck: 'spellCheck',
+              contenteditable: 'contentEditable',
+              srcset: 'srcSet',
+              crossorigin: 'crossOrigin',
+              referrerpolicy: 'referrerPolicy',
+            }
+
+            return propMap[normalized] || ''
+          }
+
+          const buildTagSyntaxRepair = (line = '') => {
+            const source = String(line || '')
+            if (!source.includes('<') || !source.includes('>')) return ''
+
+            let repaired = source
+
+            // Remove invalid punctuation attached to opening tag names: <h1.> -> <h1>
+            repaired = repaired.replace(/<([A-Za-z][\w:-]*)([^\w\s/>]+)(?=[\s/>])/g, '<$1')
+
+            // Remove invalid punctuation attached to closing tag names: </div.> -> </div>
+            repaired = repaired.replace(/<\/([A-Za-z][\w:-]*)([^\w\s>]+)(?=\s*>)/g, '</$1')
+
+            // Normalize accidental punctuation before tag end: <div..> -> <div>
+            repaired = repaired.replace(/<([A-Za-z][\w:-]*)(?:\s+[^>]*)?([.]{2,})(\s*>)/g, '<$1$3')
+
+            return repaired !== source ? repaired : ''
+          }
+
+          const toRelativeImportSpecifier = (fromFilePath, targetFilePath) => {
+            const fromParts = normalizePath(fromFilePath).split('/').filter(Boolean)
+            if (fromParts.length > 0) fromParts.pop()
+
+            const targetParts = normalizePath(targetFilePath).split('/').filter(Boolean)
+            let index = 0
+            while (
+              index < fromParts.length &&
+              index < targetParts.length &&
+              fromParts[index] === targetParts[index]
+            ) {
+              index += 1
+            }
+
+            const up = new Array(fromParts.length - index).fill('..')
+            const down = targetParts.slice(index)
+            const rel = [...up, ...down].join('/')
+            if (!rel) return './'
+            return rel.startsWith('.') ? rel : `./${rel}`
+          }
+
+          const stripSourceExtension = (value = '') => String(value || '').replace(/\.(tsx?|jsx?|mjs|cjs|d\.ts)$/i, '')
+
+          const normalizeLooseName = (value = '') => stripSourceExtension(String(value || '')).replace(/[^a-z0-9]/gi, '').toLowerCase()
+
+          const approximateDistance = (first = '', second = '') => {
+            const a = String(first || '')
+            const b = String(second || '')
+            const rows = a.length + 1
+            const cols = b.length + 1
+            const matrix = Array.from({ length: rows }, () => new Array(cols).fill(0))
+
+            for (let i = 0; i < rows; i += 1) matrix[i][0] = i
+            for (let j = 0; j < cols; j += 1) matrix[0][j] = j
+
+            for (let i = 1; i < rows; i += 1) {
+              for (let j = 1; j < cols; j += 1) {
+                const cost = a[i - 1] === b[j - 1] ? 0 : 1
+                matrix[i][j] = Math.min(
+                  matrix[i - 1][j] + 1,
+                  matrix[i][j - 1] + 1,
+                  matrix[i - 1][j - 1] + cost,
+                )
+              }
+            }
+
+            return matrix[a.length][b.length]
+          }
 
           for (const marker of markers) {
+            const rawMessage = String(marker?.message || '')
             const message = String(marker?.message || '').toLowerCase()
             const lineNumber = Number(marker?.startLineNumber || range.startLineNumber || 1)
             const lineContent = model.getLineContent(Math.max(1, lineNumber))
 
+            const unresolvedImportMatch = rawMessage.match(/Cannot resolve import path "([^"]+)"/i)
+            if (unresolvedImportMatch?.[1]) {
+              const currentFilePath = String(selectedFilePathForCodeActionsRef.current || '').trim()
+              const badSpecifier = String(unresolvedImportMatch[1] || '').trim()
+              const fromMatch = lineContent.match(/from\s+["']([^"']+)["']/)
+              const dynamicMatch = lineContent.match(/import\s*\(\s*["']([^"']+)["']\s*\)/)
+              const currentSpecifier = String(fromMatch?.[1] || dynamicMatch?.[1] || badSpecifier).trim()
+
+              const badName = normalizePath(currentSpecifier).split('/').pop() || ''
+              const badNameWithoutExt = stripSourceExtension(badName)
+              const badNameLoose = normalizeLooseName(badName)
+              const badExtMatch = badName.match(/\.([A-Za-z0-9]+)$/)
+              const badExt = String(badExtMatch?.[1] || '').toLowerCase()
+              const badSpecifierDir = normalizePath(currentSpecifier).split('/').slice(0, -1).join('/')
+              const candidatePaths = []
+
+              for (const pathValue of projectFilePathSetRef.current) {
+                const candidateName = normalizePath(pathValue).split('/').pop() || ''
+                const candidateNameWithoutExt = stripSourceExtension(candidateName)
+                if (!candidateNameWithoutExt) continue
+
+                const candidateExtMatch = candidateName.match(/\.([A-Za-z0-9]+)$/)
+                const candidateExt = String(candidateExtMatch?.[1] || '').toLowerCase()
+                if (badExt && candidateExt && badExt !== candidateExt) continue
+
+                const candidateLoose = normalizeLooseName(candidateName)
+                if (!candidateLoose) continue
+
+                const exactMatch = candidateNameWithoutExt === badNameWithoutExt
+                const looseMatch = candidateLoose === badNameLoose
+                const partialMatch =
+                  candidateLoose.includes(badNameLoose) ||
+                  badNameLoose.includes(candidateLoose) ||
+                  approximateDistance(candidateLoose, badNameLoose) <= 2
+
+                if (exactMatch || looseMatch || partialMatch) {
+                  const normalizedPath = normalizePath(pathValue)
+                  const candidateDir = normalizedPath.split('/').slice(0, -1).join('/')
+                  const sameDir = badSpecifierDir && candidateDir.endsWith(badSpecifierDir)
+                  const distance = approximateDistance(candidateLoose, badNameLoose)
+                  candidatePaths.push({
+                    pathValue,
+                    sameDir,
+                    distance,
+                  })
+                }
+              }
+
+              if (currentFilePath && candidatePaths.length > 0) {
+                const ranked = candidatePaths
+                  .sort((a, b) => {
+                    if (a.sameDir !== b.sameDir) return a.sameDir ? -1 : 1
+                    if (a.distance !== b.distance) return a.distance - b.distance
+                    return String(a.pathValue).length - String(b.pathValue).length
+                  })
+                  .map((candidate) => stripSourceExtension(toRelativeImportSpecifier(currentFilePath, candidate.pathValue)))
+                  .filter((specifier) => specifier && specifier !== currentSpecifier)
+                  .slice(0, 3)
+
+                for (const specifier of ranked) {
+                  const escaped = currentSpecifier.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+                  const nextLine = lineContent.replace(new RegExp(escaped, 'g'), specifier)
+                  pushLineReplacementAction({
+                    marker,
+                    lineNumber,
+                    title: `Change import path to "${specifier}"`,
+                    nextLine,
+                    isPreferred: true,
+                  })
+                }
+              }
+
+              if (currentFilePath && candidatePaths.length === 0 && badNameWithoutExt.includes('.')) {
+                const cleanedBase = badNameWithoutExt.replace(/\./g, '')
+                const cleanedName = badExt ? `${cleanedBase}.${badExt}` : cleanedBase
+                const cleanedSpecifier = currentSpecifier.replace(new RegExp(`${badName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`), cleanedName)
+
+                if (cleanedSpecifier && cleanedSpecifier !== currentSpecifier) {
+                  const escaped = currentSpecifier.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+                  const nextLine = lineContent.replace(new RegExp(escaped, 'g'), cleanedSpecifier)
+                  pushLineReplacementAction({
+                    marker,
+                    lineNumber,
+                    title: `Try cleaned import path "${cleanedSpecifier}"`,
+                    nextLine,
+                  })
+                }
+              }
+            }
+
+            const missingPackageMatch = rawMessage.match(/Package "([^"]+)" is not listed in package\.json dependencies\./i)
+            if (missingPackageMatch?.[1]) {
+              const packageName = String(missingPackageMatch[1] || '').trim()
+              const currentFilePath = String(selectedFilePathForCodeActionsRef.current || '').trim()
+              const localCandidate = Array.from(projectFilePathSetRef.current).find((pathValue) => {
+                const normalized = stripSourceExtension(normalizePath(pathValue))
+                return normalized.endsWith(`/${packageName}`) || normalized === packageName
+              })
+
+              if (currentFilePath && localCandidate) {
+                const localSpecifier = stripSourceExtension(toRelativeImportSpecifier(currentFilePath, localCandidate))
+                const escaped = packageName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+                const nextLine = lineContent.replace(new RegExp(escaped, 'g'), localSpecifier)
+                pushLineReplacementAction({
+                  marker,
+                  lineNumber,
+                  title: `Use local file import "${localSpecifier}"`,
+                  nextLine,
+                })
+              }
+            }
+
             if (message.includes("'export' expected") || message.includes('export expected')) {
               if (/export\.\s*default/.test(lineContent)) {
                 const fixedLine = lineContent.replace(/export\.\s*default/g, 'export default')
-                actions.push({
+                pushLineReplacementAction({
+                  marker,
+                  lineNumber,
                   title: 'Replace "export." with "export "',
-                  kind: 'quickfix',
-                  edit: {
-                    edits: [
-                      {
-                        resource: model.uri,
-                        textEdit: {
-                          range: {
-                            startLineNumber: lineNumber,
-                            startColumn: 1,
-                            endLineNumber: lineNumber,
-                            endColumn: model.getLineMaxColumn(lineNumber),
-                          },
-                          text: fixedLine,
-                        },
-                      },
-                    ],
-                  },
-                  diagnostics: [marker],
+                  nextLine: fixedLine,
                   isPreferred: true,
                 })
               }
@@ -2424,27 +2742,257 @@ const ProjectPage = () => {
             if (message.includes('array element destructuring pattern expected')) {
               if (/\[.*?,\s*\./.test(lineContent)) {
                 const fixedLine = lineContent.replace(/,\s*\./g, ', ')
-                actions.push({
+                pushLineReplacementAction({
+                  marker,
+                  lineNumber,
                   title: 'Remove invalid "." in array destructuring',
-                  kind: 'quickfix',
-                  edit: {
-                    edits: [
-                      {
-                        resource: model.uri,
-                        textEdit: {
-                          range: {
-                            startLineNumber: lineNumber,
-                            startColumn: 1,
-                            endLineNumber: lineNumber,
-                            endColumn: model.getLineMaxColumn(lineNumber),
-                          },
-                          text: fixedLine,
-                        },
-                      },
-                    ],
-                  },
-                  diagnostics: [marker],
+                  nextLine: fixedLine,
                   isPreferred: true,
+                })
+              }
+            }
+
+            if (message.includes('identifier expected') || message.includes('unexpected token')) {
+              const joinAttrMatch = lineContent.match(/([A-Za-z_$][\w$]*)([^\w\s=:>{}/-]+)([A-Za-z_$][\w$]*)(\s*=)/)
+              if (joinAttrMatch?.[0]) {
+                const left = String(joinAttrMatch[1] || '')
+                const separator = String(joinAttrMatch[2] || '')
+                const right = String(joinAttrMatch[3] || '')
+                const combined = `${left}${right}`
+                const reactEventName = normalizeReactEventName(combined)
+                const preferredIdentifier = reactEventName || combined
+
+                const fixedLine = lineContent.replace(joinAttrMatch[0], `${preferredIdentifier}${joinAttrMatch[4]}`)
+                pushLineReplacementAction({
+                  marker,
+                  lineNumber,
+                  title: reactEventName
+                    ? `Fix invalid event handler name to ${reactEventName}`
+                    : `Remove invalid "${separator}" in identifier`,
+                  nextLine: fixedLine,
+                  isPreferred: true,
+                })
+              }
+
+              const dotMatch = lineContent.match(/([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)/)
+              if (dotMatch?.[0] && /=/.test(lineContent)) {
+                const collapsed = `${dotMatch[1]}${dotMatch[2]}`
+                const reactEventName = normalizeReactEventName(collapsed)
+                const replacement = reactEventName || collapsed
+                const fixedLine = lineContent.replace(dotMatch[0], replacement)
+                pushLineReplacementAction({
+                  marker,
+                  lineNumber,
+                  title: reactEventName
+                    ? `Change ${dotMatch[0]} to ${reactEventName}`
+                    : `Join split identifier ${dotMatch[0]}`,
+                  nextLine: fixedLine,
+                  isPreferred: true,
+                })
+              }
+            }
+
+            const expectedClosingTag = message.match(/expected corresponding jsx closing tag for ['"]?([a-z][\w:-]*)['"]?/i)
+            if (expectedClosingTag?.[1]) {
+              const expectedTag = String(expectedClosingTag[1] || '').trim()
+              const closingTagRegex = /<\/([A-Za-z][\w:-]*)\s*>/
+              const closingMatch = lineContent.match(closingTagRegex)
+
+              if (expectedTag && closingMatch?.[1] && closingMatch[1] !== expectedTag) {
+                const fixedLine = lineContent.replace(closingTagRegex, `</${expectedTag}>`)
+                pushLineReplacementAction({
+                  marker,
+                  lineNumber,
+                  title: `Change closing tag to </${expectedTag}>`,
+                  nextLine: fixedLine,
+                  isPreferred: true,
+                })
+              }
+            }
+
+            const missingClosingTag = message.match(/jsx element ['"]?([a-z][\w:-]*)['"]? has no corresponding closing tag/i)
+            if (missingClosingTag?.[1]) {
+              const openTag = String(missingClosingTag[1] || '').trim()
+              if (openTag) {
+                const openTagRegex = new RegExp(`<${openTag}(\\s[^>]*)?>`, 'i')
+                const openMatch = lineContent.match(openTagRegex)
+                if (openMatch?.[0] && !/\/\s*>\s*$/.test(openMatch[0])) {
+                  const fixedLine = lineContent.replace(openTagRegex, (matchedTag) => matchedTag.replace(/>\s*$/, ' />'))
+                  pushLineReplacementAction({
+                    marker,
+                    lineNumber,
+                    title: `Convert <${openTag}> to self-closing`,
+                    nextLine: fixedLine,
+                  })
+                }
+
+                if (/<[A-Za-z][\w:-]*\b[^>]*\bclass\s*=/.test(lineContent)) {
+                  const fixedLine = lineContent.replace(/\bclass\s*=/g, 'className=')
+                  pushLineReplacementAction({
+                    marker,
+                    lineNumber,
+                    title: 'Use className instead of class in JSX',
+                    nextLine: fixedLine,
+                    isPreferred: true,
+                  })
+                }
+
+                if (/<label\b[^>]*\bfor\s*=/.test(lineContent)) {
+                  const fixedLine = lineContent.replace(/\bfor\s*=/g, 'htmlFor=')
+                  pushLineReplacementAction({
+                    marker,
+                    lineNumber,
+                    title: 'Use htmlFor instead of for in JSX',
+                    nextLine: fixedLine,
+                    isPreferred: true,
+                  })
+                }
+
+                const doublePunctuationMatch = lineContent.match(/([A-Za-z_$][\w$]*)([.]{2,}|[,;:]{2,})([A-Za-z_$][\w$]*)/)
+                if (doublePunctuationMatch?.[0]) {
+                  const repaired = `${doublePunctuationMatch[1]}.${doublePunctuationMatch[3]}`
+                  const fixedLine = lineContent.replace(doublePunctuationMatch[0], repaired)
+                  pushLineReplacementAction({
+                    marker,
+                    lineNumber,
+                    title: 'Remove invalid repeated punctuation in identifier',
+                    nextLine: fixedLine,
+                  })
+                }
+
+                if (/<[A-Za-z][\w:-]*\b[^>]*\b([A-Za-z][\w-]*)\s*=/.test(lineContent)) {
+                  const attrMatch = lineContent.match(/\b([A-Za-z][\w-]*)\s*=/)
+                  const rawProp = String(attrMatch?.[1] || '').trim()
+                  const normalizedProp = normalizeCommonJsxPropName(rawProp)
+                  if (rawProp && normalizedProp && rawProp !== normalizedProp) {
+                    const fixedLine = lineContent.replace(new RegExp(`\\b${rawProp}\\s*=`), `${normalizedProp}=`)
+                    pushLineReplacementAction({
+                      marker,
+                      lineNumber,
+                      title: `Use ${normalizedProp} instead of ${rawProp} in JSX`,
+                      nextLine: fixedLine,
+                    })
+                  }
+                }
+              }
+
+              if (message.includes('expression expected') || message.includes('declaration or statement expected')) {
+                const trimmed = lineContent.trimEnd()
+
+                if (/\}\s*\}\s*$/.test(trimmed)) {
+                  const fixedLine = lineContent.replace(/\}\s*\}\s*$/, '}')
+                  pushLineReplacementAction({
+                    marker,
+                    lineNumber,
+                    title: 'Remove extra closing brace',
+                    nextLine: fixedLine,
+                  })
+                }
+
+                if (/\)\s*\)\s*$/.test(trimmed)) {
+                  const fixedLine = lineContent.replace(/\)\s*\)\s*$/, ')')
+                  pushLineReplacementAction({
+                    marker,
+                    lineNumber,
+                    title: 'Remove extra closing parenthesis',
+                    nextLine: fixedLine,
+                  })
+                }
+
+                const operatorPairs = [
+                  { pattern: /===\s*=/, replacement: '===', title: 'Remove extra "=" after ===' },
+                  { pattern: /!==\s*=/, replacement: '!==', title: 'Remove extra "=" after !==' },
+                  { pattern: /&&\s*&&/, replacement: '&&', title: 'Remove duplicate && operator' },
+                  { pattern: /\|\|\s*\|\|/, replacement: '||', title: 'Remove duplicate || operator' },
+                ]
+
+                for (const operatorRule of operatorPairs) {
+                  if (!operatorRule.pattern.test(lineContent)) continue
+                  const fixedLine = lineContent.replace(operatorRule.pattern, operatorRule.replacement)
+                  pushLineReplacementAction({
+                    marker,
+                    lineNumber,
+                    title: operatorRule.title,
+                    nextLine: fixedLine,
+                  })
+                }
+
+                const hasMalformedArrayComma = /\[[^\]]*,\s*,[^\]]*\]/.test(lineContent) || /\[[^\]]*,\s*,\s*\]/.test(lineContent)
+                if (hasMalformedArrayComma) {
+                  const fixedLine = lineContent
+                    .replace(/,\s*,\s*\]/g, ']')
+                    .replace(/,\s*,/g, ', ')
+                  if (fixedLine !== lineContent) {
+                    pushLineReplacementAction({
+                      marker,
+                      lineNumber,
+                      title: 'Remove invalid extra comma in array literal',
+                      nextLine: fixedLine,
+                    })
+                  }
+                }
+
+                const hasDuplicateSemicolons = /;{2,}/.test(lineContent)
+                const isForLoopControl = /for\s*\([^)]*;;[^)]*\)/.test(lineContent)
+                if (hasDuplicateSemicolons && !isForLoopControl) {
+                  const fixedLine = lineContent.replace(/;{2,}/g, ';')
+                  if (fixedLine !== lineContent) {
+                    pushLineReplacementAction({
+                      marker,
+                      lineNumber,
+                      title: 'Remove duplicate semicolon',
+                      nextLine: fixedLine,
+                    })
+                  }
+                }
+              }
+
+              if (message.includes("',' expected") || message.includes('expected ,')) {
+                const trimmed = lineContent.trimEnd()
+                const nextLineNumber = Math.min(model.getLineCount(), lineNumber + 1)
+                const nextLine = String(model.getLineContent(nextLineNumber) || '')
+                const nextTrimmed = nextLine.trim()
+
+                const looksLikeObjectProperty = /^\s*[A-Za-z_$][\w$]*\s*:\s*.+$/.test(trimmed)
+                const shouldAppendComma =
+                  looksLikeObjectProperty &&
+                  !/[,{[(]\s*$/.test(trimmed) &&
+                  !/,\s*$/.test(trimmed) &&
+                  /^([A-Za-z_$][\w$]*|['"][^'"]+['"])\s*:/.test(nextTrimmed)
+
+                if (shouldAppendComma) {
+                  const fixedLine = `${trimmed},`
+                  pushLineReplacementAction({
+                    marker,
+                    lineNumber,
+                    title: 'Insert missing comma between object properties',
+                    nextLine: fixedLine,
+                    isPreferred: true,
+                  })
+                }
+              }
+
+              const repairedTagLine = buildTagSyntaxRepair(lineContent)
+              if (repairedTagLine) {
+                pushLineReplacementAction({
+                  marker,
+                  lineNumber,
+                  title: 'Fix malformed JSX/HTML tag syntax',
+                  nextLine: repairedTagLine,
+                  isPreferred: true,
+                })
+              }
+            }
+
+            // Fallback tag-syntax repair for parser errors not covered by message filters.
+            if (message.includes('expected') || message.includes('unterminated') || message.includes('invalid')) {
+              const repairedTagLine = buildTagSyntaxRepair(lineContent)
+              if (repairedTagLine) {
+                pushLineReplacementAction({
+                  marker,
+                  lineNumber,
+                  title: 'Repair invalid tag characters',
+                  nextLine: repairedTagLine,
                 })
               }
             }
