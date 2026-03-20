@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Room, RoomEvent, Track } from 'livekit-client'
+import { Mic, MicOff, PhoneOff, Volume2 } from 'lucide-react'
 import { apiRequest } from '../lib/api'
 
 const MAX_VISIBLE_AVATARS = 8
@@ -332,7 +333,7 @@ const VoiceChannelPanel = ({ projectId, getAuthToken }) => {
             onClick={joinVoiceChannel} 
             disabled={isJoining || isLeaving}
           >
-            {isJoining ? 'Joining...' : '🎙️ Join Voice Channel'}
+            {isJoining ? 'Joining...' : (<><Mic size={16} aria-hidden="true" /> Join Voice Channel</>)}
           </button>
         ) : (
           <>
@@ -342,7 +343,7 @@ const VoiceChannelPanel = ({ projectId, getAuthToken }) => {
               onClick={leaveVoiceChannel} 
               disabled={isJoining || isLeaving}
             >
-              {isLeaving ? 'Leaving...' : 'Leave'}
+              {isLeaving ? 'Leaving...' : (<><PhoneOff size={16} aria-hidden="true" /> Leave</>)}
             </button>
             <button 
               type="button" 
@@ -350,7 +351,7 @@ const VoiceChannelPanel = ({ projectId, getAuthToken }) => {
               onClick={toggleMute} 
               disabled={isJoining || isLeaving}
             >
-              {isMuted ? '🔇 Unmute' : '🔊 Mute'}
+              {isMuted ? (<><MicOff size={16} aria-hidden="true" /> Unmute</>) : (<><Volume2 size={16} aria-hidden="true" /> Mute</>)}
             </button>
           </>
         )}

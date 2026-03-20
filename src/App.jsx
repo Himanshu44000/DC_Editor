@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import AuthPage from './pages/AuthPage'
 import DashboardPage from './pages/DashboardPage'
 import LandingPage from './pages/LandingPage'
+import LegalPage from './pages/LegalPage'
 import ProjectPage from './pages/ProjectPage'
 import ProfilePage from './pages/ProfilePage'
 import AppLayout from './components/AppLayout'
@@ -12,6 +13,7 @@ function App() {
     <Routes>
       <Route path="/" element={<LandingPage />} />
       <Route path="/auth" element={<AuthPage />} />
+      <Route path="/legal/:slug" element={<LegalPage />} />
 
       <Route
         element={

@@ -1,4 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
+import {
+  File as FileIcon,
+  FileCode2,
+  FileImage,
+  FileJson,
+  FilePlus2,
+  FileText,
+  Folder,
+  FolderOpen,
+  FolderPlus,
+  Globe,
+  ImagePlus,
+  Palette,
+} from 'lucide-react'
 
 const FileTree = ({
   files,
@@ -415,12 +429,12 @@ const FileTree = ({
 
   const renderInlineCreateRow = (depth = 0) => {
     if (!pendingCreate) return null
-    const icon = pendingCreate.type === 'file' ? '📄' : '📁'
+    const InlineIcon = pendingCreate.type === 'file' ? FileIcon : Folder
     const canSubmit = Boolean(String(pendingCreate.name || '').trim()) && !pendingCreate.error
     return (
       <div className="tree-inline-create" style={{ marginLeft: `${getIndentPx(depth, true)}px` }}>
         <div className="tree-inline-row">
-          <span className="tree-icon">{icon}</span>
+          <span className="tree-icon"><InlineIcon size={16} aria-hidden="true" /></span>
           <input
             ref={createInputRef}
             className="tree-inline-input"
@@ -491,7 +505,7 @@ const FileTree = ({
         <div key={node.path || 'root'} style={{ marginLeft: `${folderIndentPx}px` }}>
           {isRenamingFolder ? (
             <div className={`tree-item tree-folder ${isExpanded ? 'expanded' : ''} ${isSelectedFolder ? 'selected' : ''}`}>
-              <span className="tree-icon">{isExpanded ? '📂' : '📁'}</span>
+              <span className="tree-icon">{isExpanded ? <FolderOpen size={16} aria-hidden="true" /> : <Folder size={16} aria-hidden="true" />}</span>
               <div className="tree-inline-edit">
                 <input
                   ref={renameInputRef}
@@ -577,7 +591,7 @@ const FileTree = ({
               }}
               type="button"
             >
-              <span className="tree-icon">{isExpanded ? '📂' : '📁'}</span>
+              <span className="tree-icon">{isExpanded ? <FolderOpen size={16} aria-hidden="true" /> : <Folder size={16} aria-hidden="true" />}</span>
               <span className="tree-label">{node.name || 'Project'}</span>
             </button>
           )}
@@ -696,26 +710,27 @@ const FileTree = ({
   const getFileIcon = (filename) => {
     const ext = filename.split('.').pop().toLowerCase()
     const iconMap = {
-      js: '📜',
-      jsx: '⚛️',
-      ts: '📘',
-      tsx: '⚛️',
-      py: '🐍',
-      html: '🌐',
-      css: '🎨',
-      json: '📋',
-      md: '📝',
-      txt: '📄',
-      png: '🖼️',
-      jpg: '🖼️',
-      jpeg: '🖼️',
-      gif: '🖼️',
-      webp: '🖼️',
-      svg: '🖼️',
-      bmp: '🖼️',
-      ico: '🖼️',
+      js: FileCode2,
+      jsx: FileCode2,
+      ts: FileCode2,
+      tsx: FileCode2,
+      py: FileCode2,
+      html: Globe,
+      css: Palette,
+      json: FileJson,
+      md: FileText,
+      txt: FileText,
+      png: FileImage,
+      jpg: FileImage,
+      jpeg: FileImage,
+      gif: FileImage,
+      webp: FileImage,
+      svg: FileImage,
+      bmp: FileImage,
+      ico: FileImage,
     }
-    return iconMap[ext] || '📄'
+    const Icon = iconMap[ext] || FileIcon
+    return <Icon size={16} aria-hidden="true" />
   }
 
   const tree = buildTree()
@@ -760,21 +775,21 @@ const FileTree = ({
               title={selectedFolderPath ? `New File in ${selectedFolderPath}` : 'New File in root'}
               type="button"
             >
-              📄+
+              <FilePlus2 size={15} aria-hidden="true" />
             </button>
             <button
               onClick={() => startCreate('folder', selectedFolderPath || '')}
               title={selectedFolderPath ? `New Folder in ${selectedFolderPath}` : 'New Folder in root'}
               type="button"
             >
-              📁+
+              <FolderPlus size={15} aria-hidden="true" />
             </button>
             <button
               onClick={openAssetPicker}
               title={selectedFolderPath ? `Upload image to ${selectedFolderPath}` : 'Upload image to root'}
               type="button"
             >
-              🖼️+
+              <ImagePlus size={15} aria-hidden="true" />
             </button>
             <input
               ref={assetInputRef}

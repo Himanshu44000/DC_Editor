@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import Editor from '@monaco-editor/react'
+import { Globe } from 'lucide-react'
 import { apiRequest } from '../lib/api'
 import { getSocket } from '../lib/socket'
 import { useAuth } from '../context/AuthContext'
@@ -4293,7 +4294,7 @@ const ProjectPage = () => {
             </button>
             {isWebVanillaTemplate && (
               <button type="button" onClick={handleOpenLivePreview} disabled={isOpeningLivePreview}>
-                {isOpeningLivePreview ? 'Opening...' : '🌐 Live Preview'}
+                {isOpeningLivePreview ? 'Opening...' : <><Globe size={16} aria-hidden="true" /> Live Preview</>}
               </button>
             )}
             <button type="button" onClick={() => navigate('/dashboard')}>
@@ -4569,7 +4570,7 @@ const ProjectPage = () => {
             {isWebVanillaTemplate && (
               <div className="run-controls">
                 <button type="button" onClick={handleOpenLivePreview} disabled={isOpeningLivePreview}>
-                  {isOpeningLivePreview ? 'Opening...' : '🌐 Live'}
+                  {isOpeningLivePreview ? 'Opening...' : <><Globe size={16} aria-hidden="true" /> Live</>}
                 </button>
               </div>
             )}

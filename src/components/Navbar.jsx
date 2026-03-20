@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
+import { Menu, Moon, Sun, X } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { apiRequest } from '../lib/api'
 
 const landingNavLinks = [
-  { href: '#about', label: 'Products' },
+  { href: '#about', label: 'About' },
   { href: '#workflow', label: 'Workflow' },
   { href: '#demo', label: 'Demo' },
 ]
@@ -19,6 +20,7 @@ const Navbar = ({ variant = 'landing', theme: externalTheme, setTheme: externalS
   const location = useLocation()
   const [avatarUrl, setAvatarUrl] = useState('')
   const [activeLandingHref, setActiveLandingHref] = useState(landingNavLinks[0]?.href || '#workflow')
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   
   // Use internal state if no external theme is provided
   const [internalTheme, setInternalTheme] = useState(() => {
@@ -59,6 +61,8 @@ const Navbar = ({ variant = 'landing', theme: externalTheme, setTheme: externalS
 
   const isLanding = variant === 'landing'
   const navLinks = isLanding ? landingNavLinks : appNavLinks
+  const onLandingRoot = location.pathname === '/'
+  const themeIconColor = '#f8fafc'
 
   useEffect(() => {
     if (!isLanding || typeof window === 'undefined') return undefined
@@ -106,18 +110,52 @@ const Navbar = ({ variant = 'landing', theme: externalTheme, setTheme: externalS
     }
   }, [isLanding])
 
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth > 527) {
+        setIsMobileMenuOpen(false)
+      }
+    }
+
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [])
+
   return (
     <header className="fixed inset-x-0 top-0 z-40 px-3 py-4">
-      <nav className="mx-auto flex w-full max-w-7xl flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-300/60 bg-white/82 px-4 py-2.5 shadow-xl shadow-slate-300/30 backdrop-blur-xl dark:border-slate-700/80 dark:bg-slate-950/88 dark:shadow-black/55">
+      <nav
+        className={`mx-auto flex w-full flex-wrap items-center justify-between gap-3 px-4 py-2.5 shadow-xl backdrop-blur-xl ${
+          isLanding
+            ? `max-w-7xl border border-slate-800 bg-black/92 shadow-black/35 ${
+                isMobileMenuOpen ? 'rounded-[1.8rem]' : 'rounded-full'
+              }`
+            : 'max-w-7xl rounded-full border border-slate-800 bg-black/92 shadow-black/35'
+        }`}
+      >
         <Link to="/" className="flex items-center gap-2.5">
           <img
-            src={theme === 'dark' ? '/branding/logo1.png' : '/branding/logo2.png'}
+            src={theme === 'dark' ? '/branding/logo1.png' : '/branding/logo1.png'}
             alt="Logo"
             className="h-11 w-11 rounded-full object-cover"
           />
         </Link>
 
-        <div className="relative flex flex-wrap items-center justify-center gap-4 text-sm font-semibold text-slate-700 dark:text-slate-200">
+        {isLanding ? (
+          <button
+            type="button"
+            className="landing-mobile-toggle hidden border-0! bg-transparent! p-0! shadow-none!"
+            aria-label={isMobileMenuOpen ? 'Close navigation menu' : 'Open navigation menu'}
+            onClick={() => setIsMobileMenuOpen((prev) => !prev)}
+          >
+            {isMobileMenuOpen ? <X size={22} color="#f8fafc" /> : <Menu size={22} color="#f8fafc" />}
+          </button>
+        ) : null}
+
+        <div
+          className={`relative flex flex-wrap items-center justify-center gap-4 text-sm font-semibold ${
+            isLanding ? 'text-slate-200' : 'text-slate-200'
+          } ${isLanding ? 'landing-nav-menu' : ''} ${isMobileMenuOpen ? 'is-open' : ''}`}
+        >
           {navLinks.map((link) =>
             isLanding ? (
               (() => {
@@ -125,11 +163,14 @@ const Navbar = ({ variant = 'landing', theme: externalTheme, setTheme: externalS
                 return (
                   <a
                     key={link.href}
-                    href={link.href}
-                    onClick={() => setActiveLandingHref(link.href)}
-                    className={`relative rounded-lg px-2 py-2 transition duration-150 hover:-translate-y-0.5 hover:text-slate-900 dark:hover:text-white ${
-                      isActive ? 'text-slate-900 dark:text-white' : 'text-slate-600 dark:text-slate-300'
-                    } after:absolute after:bottom-0.5 after:left-1/2 after:h-0.5 after:w-[calc(100%-10px)] after:-translate-x-1/2 after:rounded-full after:bg-slate-900 after:transition-transform after:duration-150 dark:after:bg-white ${
+                    href={onLandingRoot ? link.href : `/${link.href}`}
+                    onClick={() => {
+                      setActiveLandingHref(link.href)
+                      setIsMobileMenuOpen(false)
+                    }}
+                    className={`landing-nav-link relative rounded-lg px-2 py-2 transition duration-150 hover:-translate-y-0.5 hover:text-white ${
+                      isActive ? 'text-white' : 'text-slate-300'
+                    } after:absolute after:bottom-0.5 after:left-1/2 after:h-0.5 after:w-[calc(100%-10px)] after:-translate-x-1/2 after:rounded-full after:bg-white after:transition-transform after:duration-150 ${
                       isActive ? 'after:scale-x-100' : 'after:scale-x-0 hover:after:scale-x-100'
                     }`}
                   >
@@ -144,9 +185,9 @@ const Navbar = ({ variant = 'landing', theme: externalTheme, setTheme: externalS
                   <Link
                     key={link.to}
                     to={link.to}
-                    className={`relative rounded-lg px-2 py-2 transition duration-150 hover:-translate-y-0.5 hover:text-slate-900 dark:hover:text-white ${
-                      isActive ? 'text-slate-900 dark:text-white' : 'text-slate-600 dark:text-slate-300'
-                    } after:absolute after:bottom-0.5 after:left-1/2 after:h-0.5 after:w-[calc(100%-10px)] after:-translate-x-1/2 after:rounded-full after:bg-slate-900 after:transition-transform after:duration-150 dark:after:bg-white ${
+                    className={`relative rounded-lg px-2 py-2 transition duration-150 hover:-translate-y-0.5 hover:text-white ${
+                      isActive ? 'text-white' : 'text-slate-300'
+                    } after:absolute after:bottom-0.5 after:left-1/2 after:h-0.5 after:w-[calc(100%-10px)] after:-translate-x-1/2 after:rounded-full after:bg-white after:transition-transform after:duration-150 ${
                       isActive ? 'after:scale-x-100' : 'after:scale-x-0 hover:after:scale-x-100'
                     }`}
                   >
@@ -163,9 +204,18 @@ const Navbar = ({ variant = 'landing', theme: externalTheme, setTheme: externalS
           <button
             type="button"
             onClick={() => setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))}
-            className="rounded-full border border-slate-300 bg-white px-3 py-2 text-[11px] font-bold uppercase tracking-[0.11em] text-slate-800 transition hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+            aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            className={`border-0! bg-transparent! p-0! shadow-none! transition hover:opacity-75 ${
+              isLanding ? 'text-slate-100' : 'text-slate-100'
+            }`}
+            style={{ borderRadius: 0 }}
           >
-            {theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
+            {theme === 'dark' ? (
+              <Sun size={24} strokeWidth={2.4} color={themeIconColor} />
+            ) : (
+              <Moon size={24} strokeWidth={2.4} color={themeIconColor} />
+            )}
           </button>
           
           {isAuthenticated && variant === 'app' ? (
@@ -174,16 +224,16 @@ const Navbar = ({ variant = 'landing', theme: externalTheme, setTheme: externalS
                 <img
                   src={avatarUrl || '/branding/defaultAvatar.png'}
                   alt="Profile"
-                  className="h-9 w-9 rounded-full border border-slate-300 object-cover dark:border-slate-700"
+                  className="h-9 w-9 rounded-full border border-slate-700 object-cover"
                 />
               </Link>
-              <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+              <span className="text-xs font-semibold text-slate-300">
                 {user?.name || user?.email?.split('@')[0]}
               </span>
               <button
                 type="button"
                 onClick={logout}
-                className="rounded-full border border-slate-300 bg-white px-3 py-2 text-[11px] font-bold uppercase tracking-[0.11em] text-slate-800 transition hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+                className="rounded-full border border-slate-700 bg-slate-950 px-3 py-2 text-[11px] font-bold uppercase tracking-[0.11em] text-slate-100 transition hover:bg-slate-900"
               >
                 Logout
               </button>
@@ -191,7 +241,8 @@ const Navbar = ({ variant = 'landing', theme: externalTheme, setTheme: externalS
           ) : (
             <Link
               to={isAuthenticated ? '/dashboard' : '/auth'}
-              className="rounded-full border border-zinc-900 bg-zinc-900 px-4 py-2 text-[11px] font-bold uppercase tracking-[0.12em] text-white transition hover:bg-black dark:border-zinc-200 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
+              onClick={() => setIsMobileMenuOpen(false)}
+              className="landing-primary-btn rounded-full px-4 py-2 text-[11px] font-bold uppercase tracking-[0.12em]"
             >
               {isAuthenticated ? 'Open Dashboard' : 'Start Coding'}
             </Link>

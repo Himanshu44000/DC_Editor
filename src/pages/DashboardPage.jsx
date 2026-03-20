@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { Download, Github, Handshake, Link2, Package, Rocket, Trash2 } from 'lucide-react'
 import { apiRequest } from '../lib/api'
 import { useAuth } from '../context/AuthContext'
 import Navbar from '../components/Navbar'
@@ -441,23 +442,18 @@ const DashboardPage = () => {
       {project.role === 'owner' && (
         <button
           type="button"
-          className="project-action-btn inline-flex h-11 w-11 items-center justify-center rounded-xl border border-slate-300/70 bg-white/80 text-slate-700 transition hover:-translate-y-0.5 hover:bg-white dark:border-slate-700/80 dark:bg-slate-900/70 dark:text-slate-200 dark:hover:bg-slate-800"
+          className="project-action-btn inline-flex h-11 w-11 items-center justify-center rounded-xl border border-slate-800 bg-slate-950 text-slate-100 transition hover:-translate-y-0.5 hover:bg-black"
           title={githubStatus.connected ? `Upload ${project.name} to GitHub` : 'Connect GitHub to upload projects'}
           aria-label={githubStatus.connected ? `Upload ${project.name} to GitHub` : 'Connect GitHub to upload projects'}
           onClick={() => openGithubUploadDialog(project)}
         >
-          <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" className="h-5 w-5">
-            <path
-              fill="currentColor"
-              d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.01.08-2.1 0 0 .67-.21 2.2.82a7.56 7.56 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.09.16 1.9.08 2.1.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"
-            />
-          </svg>
+          <Github aria-hidden="true" focusable="false" className="h-5 w-5" />
         </button>
       )}
       {project.canEdit && (
         <button
           type="button"
-          className="project-action-btn inline-flex h-11 w-11 items-center justify-center rounded-xl border border-slate-300/70 bg-white/80 text-slate-700 transition hover:-translate-y-0.5 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700/80 dark:bg-slate-900/70 dark:text-slate-200 dark:hover:bg-slate-800"
+          className="project-action-btn inline-flex h-11 w-11 items-center justify-center rounded-xl border border-slate-800 bg-slate-950 text-slate-100 transition hover:-translate-y-0.5 hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
           title={`Download ${project.name} as ZIP`}
           aria-label={`Download ${project.name} as ZIP`}
           onClick={() => downloadProjectZip(project)}
@@ -466,29 +462,19 @@ const DashboardPage = () => {
           {downloadingProjectId === project.id ? (
             <span className="text-xs">...</span>
           ) : (
-            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" className="h-5 w-5">
-              <path
-                fill="currentColor"
-                d="M12 3a1 1 0 0 1 1 1v9.59l2.3-2.29a1 1 0 1 1 1.4 1.42l-4 3.97a1 1 0 0 1-1.4 0l-4-3.97a1 1 0 1 1 1.4-1.42L11 13.59V4a1 1 0 0 1 1-1Zm-7 15a1 1 0 0 1 1 1v1h12v-1a1 1 0 1 1 2 0v2a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1Z"
-              />
-            </svg>
+            <Download aria-hidden="true" focusable="false" className="h-5 w-5" />
           )}
         </button>
       )}
       {project.role === 'owner' && (
         <button
           type="button"
-          className="project-action-btn inline-flex h-11 w-11 items-center justify-center rounded-xl border border-red-300/70 bg-red-50/80 text-red-700 transition hover:-translate-y-0.5 hover:bg-red-100 dark:border-red-700/60 dark:bg-red-950/40 dark:text-red-300 dark:hover:bg-red-900/50"
+          className="project-action-btn inline-flex h-11 w-11 items-center justify-center rounded-xl border border-slate-800 bg-slate-950 text-slate-100 transition hover:-translate-y-0.5 hover:bg-black"
           title={`Delete ${project.name}`}
           aria-label={`Delete ${project.name}`}
           onClick={() => setProjectToDelete(project)}
         >
-          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" className="h-5 w-5">
-            <path
-              fill="currentColor"
-              d="M9 3a1 1 0 0 0-1 1v1H5a1 1 0 1 0 0 2h1v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7h1a1 1 0 1 0 0-2h-3V4a1 1 0 0 0-1-1H9Zm1 2h4v1h-4V5Zm-2 4a1 1 0 0 1 1 1v8a1 1 0 1 1-2 0v-8a1 1 0 0 1 1-1Zm8 0a1 1 0 0 1 1 1v8a1 1 0 1 1-2 0v-8a1 1 0 0 1 1-1Zm-4 0a1 1 0 0 1 1 1v8a1 1 0 1 1-2 0v-8a1 1 0 0 1 1-1Z"
-            />
-          </svg>
+          <Trash2 aria-hidden="true" focusable="false" className="h-5 w-5" />
         </button>
       )}
     </div>
@@ -499,13 +485,17 @@ const DashboardPage = () => {
       key={project.id}
       className="dash-project-card dashboard-reveal group flex flex-col gap-4 rounded-2xl border border-slate-300/60 bg-white/70 p-4 shadow-lg shadow-slate-200/60 backdrop-blur-md transition hover:-translate-y-0.5 hover:border-slate-400/70 hover:shadow-xl dark:border-slate-700/80 dark:bg-slate-900/70 dark:shadow-black/35 dark:hover:border-slate-500/70"
     >
-      <button className="w-full text-left" type="button" onClick={() => navigate(`/project/${project.id}`)}>
+      <button
+        className="w-full rounded-2xl bg-slate-900 p-4 text-left shadow-inner shadow-black/25 transition hover:bg-slate-950 dark:bg-slate-800/70 dark:shadow-black/20"
+        type="button"
+        onClick={() => navigate(`/project/${project.id}`)}
+      >
         <p className="font-['Manrope',sans-serif] text-[10px] font-extrabold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
           {project.projectType === 'practice' ? 'Practice Workspace' : 'Full Project Workspace'}
         </p>
-        <h3 className="mt-1 text-lg font-semibold text-slate-900 dark:text-slate-100">{project.name}</h3>
-        <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">Template: {getProjectTemplateDisplay(project)}</p>
-        <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">Updated: {new Date(project.updatedAt).toLocaleString()}</p>
+        <h3 className="mt-1 text-lg font-semibold text-white">{project.name}</h3>
+        <p className="mt-2 text-sm text-slate-300">Template: {getProjectTemplateDisplay(project)}</p>
+        <p className="mt-1 text-sm text-slate-300">Updated: {new Date(project.updatedAt).toLocaleString()}</p>
       </button>
 
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -567,7 +557,7 @@ const DashboardPage = () => {
           <div className="mt-12 grid gap-8 xl:grid-cols-2">
             <div className="dash-panel dashboard-reveal rounded-2xl border border-slate-300/70 bg-white/75 p-6 shadow-xl shadow-slate-200/60 backdrop-blur-md dark:border-slate-700/80 dark:bg-slate-900/70 dark:shadow-black/35">
               <p className="font-['Manrope',sans-serif] text-xs font-extrabold uppercase tracking-[0.18em] text-slate-600 dark:text-slate-300">
-                <span className="mr-2">🚀</span>
+                <Rocket aria-hidden="true" className="mr-2 inline-block h-4 w-4 align-[-2px]" />
                 Create Project
               </p>
               <form onSubmit={createProject} className="mt-4 grid gap-3">
@@ -591,8 +581,8 @@ const DashboardPage = () => {
                     value={createForm.projectType}
                     onChange={(event) => setCreateForm((prev) => ({ ...prev, projectType: event.target.value }))}
                   >
-                    <option value="practice">Practice/DSA - Simple editor with Run button</option>
-                    <option value="project">Full Project - File tree + Terminal</option>
+                    <option value="practice">Question Solver - Compiler-Style Practice</option>
+                    <option value="project">Full Project Build - End-to-End Workspace</option>
                   </select>
                 </label>
 
@@ -683,7 +673,7 @@ const DashboardPage = () => {
 
             <div className="dash-panel dashboard-reveal rounded-2xl border border-slate-300/70 bg-white/75 p-6 shadow-xl shadow-slate-200/60 backdrop-blur-md dark:border-slate-700/80 dark:bg-slate-900/70 dark:shadow-black/35">
               <p className="font-['Manrope',sans-serif] text-xs font-extrabold uppercase tracking-[0.18em] text-slate-600 dark:text-slate-300">
-                <span className="mr-2">🔗</span>
+                <Link2 aria-hidden="true" className="mr-2 inline-block h-4 w-4 align-[-2px]" />
                 Join by Invite Code
               </p>
               <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
@@ -721,7 +711,7 @@ const DashboardPage = () => {
             <section className="dash-panel dashboard-reveal rounded-2xl border border-slate-300/70 bg-white/75 p-6 shadow-xl shadow-slate-200/60 backdrop-blur-md dark:border-slate-700/80 dark:bg-slate-900/70 dark:shadow-black/35">
               <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
                 <p className="font-['Manrope',sans-serif] text-xs font-extrabold uppercase tracking-[0.18em] text-slate-600 dark:text-slate-300">
-                  <span className="mr-2">📦</span>
+                  <Package aria-hidden="true" className="mr-2 inline-block h-4 w-4 align-[-2px]" />
                   Projects Built by You
                 </p>
                 <span className="rounded-full border border-slate-300/80 bg-slate-100 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.11em] text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
@@ -740,7 +730,7 @@ const DashboardPage = () => {
             <section className="dash-panel dashboard-reveal rounded-2xl border border-slate-300/70 bg-white/75 p-6 shadow-xl shadow-slate-200/60 backdrop-blur-md dark:border-slate-700/80 dark:bg-slate-900/70 dark:shadow-black/35">
               <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
                 <p className="font-['Manrope',sans-serif] text-xs font-extrabold uppercase tracking-[0.18em] text-slate-600 dark:text-slate-300">
-                  <span className="mr-2">🤝</span>
+                  <Handshake aria-hidden="true" className="mr-2 inline-block h-4 w-4 align-[-2px]" />
                   Shared With You
                 </p>
                 <span className="rounded-full border border-slate-300/80 bg-slate-100 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.11em] text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
