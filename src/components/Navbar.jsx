@@ -16,7 +16,7 @@ const appNavLinks = [
 ]
 
 const Navbar = ({ variant = 'landing', theme: externalTheme, setTheme: externalSetTheme }) => {
-  const { isAuthenticated, user, logout, getAuthToken } = useAuth()
+  const { isAuthenticated, user, logout, getAuthToken, loading } = useAuth()
   const location = useLocation()
   const [avatarUrl, setAvatarUrl] = useState('')
   const [activeLandingHref, setActiveLandingHref] = useState(landingNavLinks[0]?.href || '#workflow')
@@ -238,7 +238,7 @@ const Navbar = ({ variant = 'landing', theme: externalTheme, setTheme: externalS
                 Logout
               </button>
             </>
-          ) : (
+          ) : !loading ? (
             <Link
               to={isAuthenticated ? '/dashboard' : '/auth'}
               onClick={() => setIsMobileMenuOpen(false)}
@@ -246,7 +246,7 @@ const Navbar = ({ variant = 'landing', theme: externalTheme, setTheme: externalS
             >
               {isAuthenticated ? 'Open Dashboard' : 'Start Coding'}
             </Link>
-          )}
+          ) : null}
         </div>
       </nav>
     </header>

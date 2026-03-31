@@ -727,6 +727,66 @@ label {
   color: #fff;
 }
 
+.auth-card .cl-rootBox,
+.auth-card .cl-card {
+  width: 100%;
+}
+
+.auth-card .cl-socialButtonsIconButton,
+.auth-card .cl-socialButtonsBlockButton,
+.auth-card .cl-formFieldInput,
+.auth-card .cl-alternativeMethodsBlockButton,
+.auth-card .cl-identityPreview {
+  background: #0b1324;
+  border: 1px solid #334155;
+  color: #e2e8f0;
+}
+
+.auth-card .cl-socialButtonsIconButton:hover,
+.auth-card .cl-socialButtonsBlockButton:hover,
+.auth-card .cl-alternativeMethodsBlockButton:hover {
+  background: #13203a;
+}
+
+/* Keep provider icons (especially GitHub's dark logo) visible on dark auth screens. */
+.auth-card .cl-socialButtonsIconButton {
+  background: #e2e8f0 !important;
+  border: 1px solid #475569 !important;
+  color: #0f172a !important;
+  opacity: 1 !important;
+}
+
+.auth-card .cl-socialButtonsIconButton:hover {
+  background: #f8fafc !important;
+}
+
+.auth-card .cl-socialButtonsIconButton svg,
+.auth-card .cl-socialButtonsIconButton path,
+.auth-card .cl-socialButtonsIconButton img {
+  opacity: 1 !important;
+}
+
+.auth-card .cl-dividerLine {
+  background: #334155;
+}
+
+.auth-card .cl-dividerText,
+.auth-card .cl-footerActionText,
+.auth-card .cl-formFieldLabel {
+  color: #cbd5e1;
+}
+
+.auth-card .cl-formFieldInput::placeholder {
+  color: #94a3b8;
+}
+
+.auth-card .cl-footerActionLink,
+.auth-card .cl-formButtonReset,
+.auth-card .cl-identityPreviewEditButton,
+.auth-card .cl-formResendCodeLink {
+  color: #93c5fd;
+}
+
 .error-text {
   color: #fca5a5;
   margin: 0;

@@ -102,6 +102,10 @@ const AI_SYSTEM_INSTRUCTION = [
   'You are an AI coding assistant inside a collaborative web IDE.',
   'Prioritize practical, accurate, and secure guidance.',
   'If code is requested, provide concise explanations and directly usable snippets.',
+  'Always align answers with the project template, framework, language, and file structure provided in the prompt context.',
+  'Do not switch stacks unnecessarily. For example, do not answer with vanilla HTML/CSS/JS when the project is React, Next.js, Vue, or another framework-based template unless the user explicitly asks for that.',
+  'When suggesting code changes for features or new app flows, prefer the minimum important files needed for a solid implementation instead of dumping boilerplate for many unnecessary files.',
+  'Favor updating existing entry files and core files first, and mention optional follow-up files briefly instead of fully generating them unless they are truly required.',
   'When uncertain, say what assumption you are making.',
 ].join(' ')
 
@@ -1729,6 +1733,49 @@ const getTemplateVariantDescription = (templateId, variantId) => {
   const variantKey = String(variantId || '').trim()
   if (!templateKey || !variantKey) return ''
   return TEMPLATE_VARIANT_DESCRIPTIONS?.[templateKey]?.[variantKey] || ''
+}
+
+const buildAiProjectTemplateContextBlock = (project) => {
+  if (!project) return ''
+
+  const templateId = String(project.templateId || '').trim()
+  const resolvedVariantId = resolveTemplateVariantId(project.templateId, project.templateVariantId, project.language)
+  const template = getTemplate(templateId || project.language)
+  const variant = getTemplateVariant(template, resolvedVariantId)
+  const projectType = inferProjectTypeFromTemplate(templateId)
+  const templateLabel = String(template?.label || templateId || 'Custom').trim()
+  const variantLabel = String(variant?.label || resolvedVariantId || '').trim()
+  const language = String(project.language || variant?.defaultLanguage || '').trim()
+  const templateDescription = getTemplateDescription(templateId)
+  const variantDescription = getTemplateVariantDescription(templateId, resolvedVariantId)
+
+  const lines = [
+    'Project template context (follow this stack when answering):',
+    `- Project type: ${projectType || 'project'}`,
+    `- Template id: ${templateId || 'custom'}`,
+    `- Template: ${templateLabel || 'Custom'}`,
+    `- Variant id: ${resolvedVariantId || 'default'}`,
+  ]
+
+  if (variantLabel) {
+    lines.push(`- Variant: ${variantLabel}`)
+  }
+
+  if (language) {
+    lines.push(`- Primary language: ${language}`)
+  }
+
+  if (templateDescription) {
+    lines.push(`- Template details: ${templateDescription}`)
+  }
+
+  if (variantDescription) {
+    lines.push(`- Variant details: ${variantDescription}`)
+  }
+
+  lines.push('- Answering rules: match this template exactly, prefer existing framework conventions, and keep code suggestions focused on the smallest important file set needed.')
+
+  return lines.join('\n')
 }
 
 const runtimeForExtension = (path) => {
@@ -4654,6 +4701,11 @@ const buildPromptWithContext = async ({ messageText, project, attachments }) => 
   const sections = [sanitizeDbText(String(messageText || '').trim())]
 
   if (project) {
+    const templateContext = buildAiProjectTemplateContextBlock(project)
+    if (templateContext) {
+      sections.push(templateContext)
+    }
+
     if (AI_CHAT_PROJECT_CONTEXT_MODE === 'full') {
       const projectContext = await buildProjectContextBlock(project)
       sections.push(
@@ -5010,7 +5062,7 @@ const buildGhostHeuristicSuggestion = ({ language, linePrefix, lineSuffix, fileC
 const callGeminiGenerate = async (historyMessages, options = {}) => {
   const temperature = Number.isFinite(Number(options.temperature))
     ? Number(options.temperature)
-    : 0.25
+    : 0.15
   const maxOutputTokens = Number.isFinite(Number(options.maxOutputTokens))
     ? Math.max(24, Number(options.maxOutputTokens))
     : 1024
@@ -5126,7 +5178,7 @@ const callGeminiGenerate = async (historyMessages, options = {}) => {
 const callGeminiGenerateStream = async (historyMessages, options = {}) => {
   const temperature = Number.isFinite(Number(options.temperature))
     ? Number(options.temperature)
-    : 0.25
+    : 0.15
   const maxOutputTokens = Number.isFinite(Number(options.maxOutputTokens))
     ? Math.max(24, Number(options.maxOutputTokens))
     : 1024

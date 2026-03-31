@@ -82,7 +82,7 @@ const glassPanel =
   'rounded-2xl border border-slate-300/40 bg-white/75 p-6 shadow-xl shadow-slate-300/25 backdrop-blur-md dark:border-slate-700/70 dark:bg-slate-900/60 dark:shadow-black/40'
 
 const LandingPage = () => {
-  const { isAuthenticated } = useAuth()
+  const { isAuthenticated, loading } = useAuth()
   const [currentVideoIndex, setCurrentVideoIndex] = useState(0)
   const videoNodesRef = useRef([])
   const [theme, setTheme] = useState(() => {
@@ -116,6 +116,10 @@ const LandingPage = () => {
       node.volume = 0
       if (index !== currentVideoIndex) {
         node.pause()
+        node.currentTime = 0
+      } else {
+        node.currentTime = 0
+        node.play().catch(() => {})
       }
     })
   }, [currentVideoIndex])
@@ -142,12 +146,14 @@ const LandingPage = () => {
               run code, use AI, and manage full projects without leaving the browser.
             </p>
             <div className="mt-8 flex flex-wrap items-center gap-3">
-              <Link
-                to={isAuthenticated ? '/dashboard' : '/auth'}
-                className="launch-editor-btn rounded-full px-6 py-3 text-xs font-bold uppercase tracking-[0.12em] text-white transition hover:-translate-y-0.5"
-              >
-                {isAuthenticated ? 'Launch Editor' : 'Create Workspace'}
-              </Link>
+              {!loading && (
+                <Link
+                  to={isAuthenticated ? '/dashboard' : '/auth'}
+                  className="launch-editor-btn rounded-full px-6 py-3 text-xs font-bold uppercase tracking-[0.12em] text-white transition hover:-translate-y-0.5"
+                >
+                  {isAuthenticated ? 'Launch Editor' : 'Create Workspace'}
+                </Link>
+              )}
               <a
                 href="#about"
                 className="landing-secondary-btn rounded-full px-6 py-3 text-xs font-bold uppercase tracking-[0.12em]"
@@ -267,7 +273,7 @@ const LandingPage = () => {
                         loop
                         playsInline
                         preload="metadata"
-                        controlsList="nodownload noplaybackrate noremoteplayback"
+                        controlsList="nodownload noplaybackrate noremoteplayback nofullscreen"
                         disablePictureInPicture
                         onVolumeChange={(event) => {
                           event.currentTarget.muted = true
@@ -355,12 +361,14 @@ const LandingPage = () => {
             Bring your team into DC Editor and ship together.
           </h2>
           <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-            <Link
-              to={isAuthenticated ? '/dashboard' : '/auth'}
-              className="landing-primary-btn rounded-full px-6 py-3 text-xs font-bold uppercase tracking-[0.12em]"
-            >
-              {isAuthenticated ? 'Go to Dashboard' : 'Get Started'}
-            </Link>
+            {!loading && (
+              <Link
+                to={isAuthenticated ? '/dashboard' : '/auth'}
+                className="landing-primary-btn rounded-full px-6 py-3 text-xs font-bold uppercase tracking-[0.12em]"
+              >
+                {isAuthenticated ? 'Go to Dashboard' : 'Get Started'}
+              </Link>
+            )}
             <a
               href="#home"
               className="landing-secondary-btn rounded-full px-6 py-3 text-xs font-bold uppercase tracking-[0.12em]"

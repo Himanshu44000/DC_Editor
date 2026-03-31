@@ -19,11 +19,26 @@ const clerkAppearance = {
   elements: {
     rootBox: { width: '100%' },
     card: {
-      boxShadow: 'none',
-      border: 'none',
-      background: 'transparent',
+      boxShadow: '0 16px 44px rgba(2, 6, 23, 0.38)',
+      border: '1px solid #1f2937',
+      background: 'rgba(2, 6, 23, 0.72)',
+      backdropFilter: 'blur(10px)',
+      borderRadius: '14px',
       width: '100%',
-      padding: '0.25rem 0 0',
+      padding: '0.5rem 0.25rem 0.25rem',
+    },
+    navbar: {
+      background: '#0b1324',
+      border: '1px solid #1f2937',
+      borderRadius: '10px',
+      padding: '3px',
+    },
+    navbarButton: {
+      color: '#cbd5e1',
+    },
+    navbarButtonActive: {
+      background: '#1d4ed8',
+      color: '#ffffff',
     },
     headerTitle: { color: '#e2e8f0' },
     headerSubtitle: { color: '#94a3b8' },
@@ -32,7 +47,13 @@ const clerkAppearance = {
       border: '1px solid #334155',
       color: '#e2e8f0',
     },
+    socialButtonsBlockButtonArrow: { color: '#94a3b8' },
     socialButtonsBlockButtonText: { color: '#e2e8f0' },
+    socialButtonsIconButton: {
+      background: '#0b1324',
+      border: '1px solid #334155',
+      color: '#e2e8f0',
+    },
     dividerLine: { background: '#334155' },
     dividerText: { color: '#94a3b8' },
     formFieldLabel: { color: '#cbd5e1' },
@@ -45,9 +66,20 @@ const clerkAppearance = {
       background: '#2563eb',
       color: '#ffffff',
     },
+    formFieldInputShowPasswordButton: { color: '#94a3b8' },
     formButtonReset: { color: '#93c5fd' },
+    formResendCodeLink: { color: '#93c5fd' },
     footerActionText: { color: '#94a3b8' },
     footerActionLink: { color: '#93c5fd' },
+    alternativeMethodsBlockButton: {
+      background: '#0b1324',
+      border: '1px solid #334155',
+      color: '#e2e8f0',
+    },
+    identityPreview: {
+      background: '#0b1324',
+      border: '1px solid #334155',
+    },
     identityPreviewText: { color: '#e2e8f0' },
     identityPreviewEditButton: { color: '#93c5fd' },
     formFieldSuccessText: { color: '#10b981' },
@@ -59,8 +91,19 @@ const clerkAppearance = {
 }
 
 const AuthPage = () => {
-  const { isAuthenticated } = useAuth()
+  const { isAuthenticated, loading } = useAuth()
   const [mode, setMode] = useState('login')
+
+  if (loading) {
+    return (
+      <>
+        <Navbar variant="landing" />
+        <div className="center-page" style={{ paddingTop: '5rem' }}>
+          <div className="card auth-card" />
+        </div>
+      </>
+    )
+  }
 
   if (isAuthenticated) {
     return <Navigate to="/dashboard" replace />

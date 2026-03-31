@@ -69,7 +69,7 @@ const LandingFooter = ({ theme, compact = false }) => {
 
             <div className="flex flex-col items-center justify-center border-b border-slate-300 py-10 text-center dark:border-slate-800">
               <img src={theme === 'dark' ? '/branding/logo1.png' : '/branding/logo2.png'} alt="Logo" className="h-50 w-50 object-contain" />
-              <p className="mt-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-600 dark:text-slate-400">Collaborative Code Studio</p>
+              <p className="mt-2 text-[13px] font-semibold uppercase tracking-[0.2em] text-slate-600 dark:text-slate-400">Dynamic Collaborative Editor</p>
             </div>
           </>
         ) : null}
