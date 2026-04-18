@@ -8800,6 +8800,20 @@ io.on('connection', (socket) => {
       ...process.env,
       FORCE_COLOR: '0',
     }
+
+    // Render/backend often runs with NODE_ENV=production, which can make npm omit devDependencies.
+    // For interactive project terminals, always install full dev tooling and keep lockfiles enabled.
+    if (/^(npm|npx)\b/i.test(trimmedCommand)) {
+      childEnv.NPM_CONFIG_PRODUCTION = 'false'
+      childEnv.npm_config_production = 'false'
+      childEnv.NPM_CONFIG_OMIT = ''
+      childEnv.npm_config_omit = ''
+      childEnv.NPM_CONFIG_INCLUDE = 'dev'
+      childEnv.npm_config_include = 'dev'
+      childEnv.NPM_CONFIG_PACKAGE_LOCK = 'true'
+      childEnv.npm_config_package_lock = 'true'
+    }
+
     delete childEnv.PORT
 
     const child = spawn(shell.command, shell.args, {
