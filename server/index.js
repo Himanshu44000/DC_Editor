@@ -2977,8 +2977,16 @@ const syncProjectFilesFromWorkspace = (project, workspaceDir) => {
     try {
       const entries = fs.readdirSync(dir, { withFileTypes: true })
       for (const entry of entries) {
-        // Skip node_modules, .git, and hidden folders to avoid bloat
-        if (entry.name.startsWith('.') || entry.name === 'node_modules') continue
+        const isDirectory = entry.isDirectory()
+        const isFile = entry.isFile()
+
+        // Skip heavy/internal directories to avoid bloat.
+        if (isDirectory && (entry.name === 'node_modules' || entry.name === '.git' || entry.name.startsWith('.'))) {
+          continue
+        }
+
+        // Skip internal workspace metadata file.
+        if (isFile && entry.name === '.collab-files.json') continue
         
         const absolutePath = path.join(dir, entry.name)
         const relativePath = relativePrefix ? `${relativePrefix}/${entry.name}` : entry.name
@@ -3907,6 +3915,12 @@ const rewriteLiveDevResponseText = (text, sessionId, contentType = '', routePref
   // Ensure Vite HMR websocket carries live-dev session id for upgrade proxy routing.
   result = result.replace(/\?token=\$\{wsToken\}/g, `?token=\${wsToken}&dcsid=${String(sessionId || '')}`)
 
+  // Rewrite websocket host expression broadly for Vite client variants.
+  result = result.replace(
+    /\$\{socketProtocol\}:\/\/\$\{socketHost\}/g,
+    `\${socketProtocol}://\${location.host}${basePrefixWithSlash}`,
+  )
+
   // Force Vite HMR websocket endpoint through the current live-dev route prefix.
   result = result.replace(
     /new WebSocket\(`\$\{socketProtocol\}:\/\/\$\{socketHost\}\?token=\$\{wsToken\}`,\s*"vite-hmr"\)/g,
@@ -3964,15 +3978,18 @@ const fetchLiveDevUpstream = async ({ session, targetPath, req }) => {
   }
 }
 
-const buildWebSocketProxyRequest = (req, upstreamPath, host, port) => {
+const buildWebSocketProxyRequest = (req, upstreamPath, host, port, protocol = 'http:') => {
   const requestLine = `GET ${upstreamPath || '/'} HTTP/${req.httpVersion || '1.1'}`
   const lines = [requestLine]
   const normalizedHost = normalizeLoopbackHost(host)
   const hostHeader = normalizedHost && normalizedHost.includes(':') ? `[${normalizedHost}]:${port}` : `${normalizedHost || 'localhost'}:${port}`
+  const upstreamOrigin = `${String(protocol || 'http:').toLowerCase()}//${hostHeader}`
 
   const filteredHeaders = {
     ...req.headers,
     host: hostHeader,
+    origin: upstreamOrigin,
+    referer: `${upstreamOrigin}/`,
     connection: 'Upgrade',
     upgrade: 'websocket',
   }
@@ -4135,7 +4152,13 @@ const handleLiveDevWebSocketUpgrade = async (request, socket, head) => {
 
       upstream.once('connect', () => {
         try {
-          const proxyRequest = buildWebSocketProxyRequest(request, targetPath, host, Number(resolved.session.port))
+          const proxyRequest = buildWebSocketProxyRequest(
+            request,
+            targetPath,
+            host,
+            Number(resolved.session.port),
+            resolved.session.protocol,
+          )
           upstream.write(proxyRequest)
           if (head && head.length) {
             upstream.write(head)
@@ -9214,6 +9237,9 @@ io.on('connection', (socket) => {
     }
 
     try {
+      // Pull generated files from previous commands before pushing current project state,
+      // so artifacts like package-lock.json are not missed due timing/race conditions.
+      syncProjectFilesFromWorkspace(project, workspaceDir)
       syncProjectFilesToWorkspace(project, workspaceDir)
     } catch (syncError) {
       socket.emit('terminal:error', {
