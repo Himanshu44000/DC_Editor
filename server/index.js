@@ -3870,10 +3870,13 @@ const resolveLiveDevSession = (sessionId) => {
   }
 }
 
-const rewriteLiveDevResponseText = (text, sessionId, contentType = '') => {
+const rewriteLiveDevResponseText = (text, sessionId, contentType = '', routePrefix = '/live-dev') => {
   const source = String(text || '')
   const normalizedType = String(contentType || '').toLowerCase()
-  const basePrefix = `/live-dev/${String(sessionId || '')}`
+  const normalizedRoutePrefix = String(routePrefix || '/live-dev').startsWith('/')
+    ? String(routePrefix || '/live-dev')
+    : `/${String(routePrefix || 'live-dev')}`
+  const basePrefix = `${normalizedRoutePrefix}/${String(sessionId || '')}`
   const basePrefixWithSlash = `${basePrefix}/`
 
   let result = source
@@ -3990,6 +3993,65 @@ const writeUpgradeError = (socket, statusCode, statusText, message = '') => {
     `${statusLine}\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`,
   )
   socket.destroy()
+}
+
+const buildLiveDevResponsePath = ({ sessionId, requestedPath = '/', routePrefix = '/api/live-dev' }) => {
+  const normalizedPrefix = String(routePrefix || '/api/live-dev').startsWith('/')
+    ? String(routePrefix || '/api/live-dev')
+    : `/${String(routePrefix || 'api/live-dev')}`
+  const rawPath = String(requestedPath || '/').trim() || '/'
+  const normalizedPath = rawPath.startsWith('/') ? rawPath : `/${rawPath}`
+  return `${normalizedPrefix}/${String(sessionId || '')}${normalizedPath}`
+}
+
+const serveLiveDevPath = async (req, res, { sessionId, suffix = '', routePrefix = '/live-dev' }) => {
+  const resolved = resolveLiveDevSession(String(sessionId || ''))
+  if (!resolved) {
+    return res.status(404).send('Live dev session not found or expired')
+  }
+
+  const queryIndex = String(req.originalUrl || '').indexOf('?')
+  const query = queryIndex >= 0 ? String(req.originalUrl || '').slice(queryIndex) : ''
+  const trimmedSuffix = String(suffix || '').trim()
+  const targetPath = trimmedSuffix ? `/${trimmedSuffix}${query}` : `/${query}`.replace(/\/$/, '/').replace(/^\/?\?/, '/?')
+
+  try {
+    const upstream = await fetchLiveDevUpstream({
+      session: resolved.session,
+      targetPath,
+      req,
+    })
+
+    if (!upstream.ok) {
+      return res.status(502).send(`Live dev proxy failed: ${upstream.errorMessage || 'fetch failed'}`)
+    }
+
+    const upstreamResponse = upstream.upstreamResponse
+    const contentType = String(upstreamResponse.headers.get('content-type') || '')
+    res.status(upstreamResponse.status)
+    res.setHeader('Cache-Control', 'no-store')
+    if (contentType) {
+      res.setHeader('Content-Type', contentType)
+    }
+
+    if (isLiveDevTextResponse(contentType)) {
+      const text = await upstreamResponse.text()
+      const rewritten = rewriteLiveDevResponseText(text, sessionId, contentType, routePrefix)
+      return res.send(rewritten)
+    }
+
+    const raw = Buffer.from(await upstreamResponse.arrayBuffer())
+    return res.send(raw)
+  } catch (proxyError) {
+    console.error('[live-dev] HTTP proxy failure', {
+      sessionId,
+      routePrefix,
+      message: proxyError?.message || 'Unknown error',
+    })
+    return res
+      .status(502)
+      .send(`Live dev proxy failed: ${proxyError.message || 'Unable to reach local dev server'}`)
+  }
 }
 
 const handleLiveDevWebSocketUpgrade = async (request, socket, head) => {
@@ -7309,10 +7371,21 @@ app.post('/api/projects/:projectId/terminals/:terminalId/live-dev-session', auth
 
   const origin = `${req.protocol}://${req.get('host')}`
   const requestedPath = String(parsedTarget.pathWithQuery || '/').trim() || '/'
-  const normalizedPath = requestedPath.startsWith('/') ? requestedPath : `/${requestedPath}`
+  const apiResponsePath = buildLiveDevResponsePath({
+    sessionId,
+    requestedPath,
+    routePrefix: '/api/live-dev',
+  })
+  const legacyResponsePath = buildLiveDevResponsePath({
+    sessionId,
+    requestedPath,
+    routePrefix: '/live-dev',
+  })
 
   return res.json({
-    url: `${origin}/live-dev/${sessionId}${normalizedPath}`,
+    url: `${origin}${apiResponsePath}`,
+    apiPath: apiResponsePath,
+    legacyUrl: `${origin}${legacyResponsePath}`,
     expiresAt,
   })
 })
@@ -7382,54 +7455,19 @@ app.get(/^\/live\/([^/]+)\/(.+)$/, async (req, res) => {
 })
 
 app.get(/^\/live-dev\/([^/]+)(?:\/(.*))?$/, async (req, res) => {
-  const sessionId = String(req.params?.[0] || '')
-  const resolved = resolveLiveDevSession(sessionId)
-  if (!resolved) {
-    return res.status(404).send('Live dev session not found or expired')
-  }
+  return serveLiveDevPath(req, res, {
+    sessionId: String(req.params?.[0] || ''),
+    suffix: String(req.params?.[1] || ''),
+    routePrefix: '/live-dev',
+  })
+})
 
-  const suffix = String(req.params?.[1] || '').trim()
-  const queryIndex = String(req.originalUrl || '').indexOf('?')
-  const query = queryIndex >= 0 ? String(req.originalUrl || '').slice(queryIndex) : ''
-  const targetPath = suffix ? `/${suffix}${query}` : `/${query}`.replace(/\/$/, '/').replace(/^\/?\?/, '/?')
-
-  try {
-    const upstream = await fetchLiveDevUpstream({
-      session: resolved.session,
-      targetPath,
-      req,
-    })
-
-    if (!upstream.ok) {
-      return res.status(502).send(`Live dev proxy failed: ${upstream.errorMessage || 'fetch failed'}`)
-    }
-
-    const upstreamResponse = upstream.upstreamResponse
-
-    const contentType = String(upstreamResponse.headers.get('content-type') || '')
-    res.status(upstreamResponse.status)
-    res.setHeader('Cache-Control', 'no-store')
-    if (contentType) {
-      res.setHeader('Content-Type', contentType)
-    }
-
-    if (isLiveDevTextResponse(contentType)) {
-      const text = await upstreamResponse.text()
-      const rewritten = rewriteLiveDevResponseText(text, sessionId, contentType)
-      return res.send(rewritten)
-    }
-
-    const raw = Buffer.from(await upstreamResponse.arrayBuffer())
-    return res.send(raw)
-  } catch (proxyError) {
-    console.error('[live-dev] HTTP proxy failure', {
-      sessionId,
-      message: proxyError?.message || 'Unknown error',
-    })
-    return res
-      .status(502)
-      .send(`Live dev proxy failed: ${proxyError.message || 'Unable to reach local dev server'}`)
-  }
+app.get(/^\/api\/live-dev\/([^/]+)(?:\/(.*))?$/, async (req, res) => {
+  return serveLiveDevPath(req, res, {
+    sessionId: String(req.params?.[0] || ''),
+    suffix: String(req.params?.[1] || ''),
+    routePrefix: '/api/live-dev',
+  })
 })
 
 app.get('/api/projects/:projectId/activity', authMiddleware, async (req, res) => {

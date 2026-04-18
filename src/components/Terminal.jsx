@@ -3,6 +3,7 @@ import { getSocket } from '../lib/socket'
 
 const DEFAULT_API_BASE = 'http://localhost:4000/api'
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || DEFAULT_API_BASE).replace(/\/+$/, '')
+const API_ORIGIN = API_BASE.replace(/\/api\/?$/i, '')
 
 const stripAnsi = (text = '') => {
   const source = String(text || '')
@@ -214,7 +215,12 @@ const Terminal = ({ projectId, projectName, token, userId, ownerId, sharedTermin
         throw new Error(payload?.message || 'Failed to open live dev preview')
       }
 
-      previewTab.location.href = String(payload.url)
+      const preferredPath = String(payload.apiPath || '').trim()
+      const preferredUrl = preferredPath
+        ? `${API_ORIGIN}${preferredPath.startsWith('/') ? preferredPath : `/${preferredPath}`}`
+        : String(payload.url || '').trim()
+
+      previewTab.location.href = preferredUrl || String(payload.url || '')
       previewTab.focus()
     } catch (previewError) {
       try {
