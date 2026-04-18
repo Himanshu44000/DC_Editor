@@ -10,12 +10,21 @@ dotenv.config()
 
 const DATABASE_URL = process.env.DATABASE_URL
 const USE_DOCKER = process.env.USE_DOCKER === 'true'
+const DB_SSL_ENABLED =
+  String(process.env.DB_SSL_ENABLED || (process.env.NODE_ENV === 'production' ? 'true' : 'false'))
+    .trim()
+    .toLowerCase() === 'true'
+const DB_SSL_REJECT_UNAUTHORIZED =
+  String(process.env.DB_SSL_REJECT_UNAUTHORIZED || 'false').trim().toLowerCase() === 'true'
 
 if (!DATABASE_URL) {
   throw new Error('DATABASE_URL is required for execution worker')
 }
 
-const dbClient = new Client({ connectionString: DATABASE_URL })
+const dbClient = new Client({
+  connectionString: DATABASE_URL,
+  ...(DB_SSL_ENABLED ? { ssl: { rejectUnauthorized: DB_SSL_REJECT_UNAUTHORIZED } } : {}),
+})
 await dbClient.connect()
 const redisConnection = createRedisConnection()
 

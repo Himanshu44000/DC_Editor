@@ -67,6 +67,12 @@ const PORT = process.env.PORT || 4000
 const JWT_SECRET = String(process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-in-production').trim()
 const JWT_REFRESH_SECRET = String(process.env.JWT_REFRESH_SECRET || 'your-super-secret-refresh-key-change-in-production').trim()
 const DATABASE_URL = process.env.DATABASE_URL
+const DB_SSL_ENABLED =
+  String(process.env.DB_SSL_ENABLED || (process.env.NODE_ENV === 'production' ? 'true' : 'false'))
+    .trim()
+    .toLowerCase() === 'true'
+const DB_SSL_REJECT_UNAUTHORIZED =
+  String(process.env.DB_SSL_REJECT_UNAUTHORIZED || 'false').trim().toLowerCase() === 'true'
 const USE_DOCKER = process.env.USE_DOCKER === 'true'
 const USE_EXECUTION_QUEUE = process.env.USE_EXECUTION_QUEUE === 'true'
 const LIVEKIT_URL = String(process.env.LIVEKIT_URL || '').trim()
@@ -3721,6 +3727,14 @@ const sanitizeImageUploadPath = (targetFolderPath = '', fileName = '') => {
   return normalizePath(normalizedFolder ? `${normalizedFolder}/${safeName}` : safeName)
 }
 
+const buildPostgresClientConfig = () => {
+  const config = { connectionString: DATABASE_URL }
+  if (DB_SSL_ENABLED) {
+    config.ssl = { rejectUnauthorized: DB_SSL_REJECT_UNAUTHORIZED }
+  }
+  return config
+}
+
 const persistProject = async (project) => {
   sanitizeProjectPathState(project)
 
@@ -3731,7 +3745,7 @@ const persistProject = async (project) => {
 
   // Use an isolated client for this transaction so concurrent requests cannot
   // interleave statements into the same transaction context.
-  const transactionClient = new Client({ connectionString: DATABASE_URL })
+  const transactionClient = new Client(buildPostgresClientConfig())
   await transactionClient.connect()
 
   await transactionClient.query('BEGIN')
@@ -4222,12 +4236,7 @@ const initDb = async () => {
     return
   }
 
-  const clientConfig = {
-    connectionString: DATABASE_URL,
-    ssl: process.env.NODE_ENV === 'production' ? true : { rejectUnauthorized: false }
-  }
-  
-  dbClient = new Client(clientConfig)
+  dbClient = new Client(buildPostgresClientConfig())
   await dbClient.connect()
 
   await dbClient.query('ALTER TABLE collab_users ADD COLUMN IF NOT EXISTS avatar_url TEXT')
