@@ -170,6 +170,7 @@ const invitations = new Map()
 const terminalSessions = new Map()
 const terminalDisconnectStopTimers = new Map()
 const livePreviewSessions = new Map()
+const liveDevSessions = new Map()
 const executionJobs = new Map()
 const pendingProjectPersistTimers = new Map()
 const pendingWorkspaceFileSyncTimers = new Map()
@@ -179,6 +180,7 @@ const TERMINAL_WORKSPACES_ROOT = path.join(process.cwd(), '.tw')
 const TERMINAL_WORKSPACE_EPHEMERAL = String(process.env.TERMINAL_WORKSPACE_EPHEMERAL || 'true').toLowerCase() !== 'false'
 const LOCAL_STATE_PATH = path.join(process.cwd(), '.collab-state.json')
 const LIVE_PREVIEW_SESSION_TTL_MS = 1000 * 60 * 60 * 6
+const LIVE_DEV_SESSION_TTL_MS = 1000 * 60 * 30
 let dbClient = null
 
 const scheduleProjectPersist = (projectId, delayMs = PROJECT_PERSIST_DEBOUNCE_MS) => {
@@ -3748,6 +3750,128 @@ const getLivePreviewVersion = (project) => {
   return String(project?.updatedAt || '')
 }
 
+const parseLoopbackTargetUrl = (rawUrl = '') => {
+  let parsed = null
+  try {
+    parsed = new URL(String(rawUrl || '').trim())
+  } catch {
+    return { ok: false, message: 'Invalid preview URL' }
+  }
+
+  const protocol = String(parsed.protocol || '').toLowerCase()
+  if (protocol !== 'http:' && protocol !== 'https:') {
+    return { ok: false, message: 'Only http/https preview URLs are supported' }
+  }
+
+  const hostname = String(parsed.hostname || '').toLowerCase()
+  if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
+    return { ok: false, message: 'Only localhost preview URLs are supported' }
+  }
+
+  const port = Number(parsed.port || (protocol === 'https:' ? 443 : 80))
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    return { ok: false, message: 'Invalid preview port' }
+  }
+
+  return {
+    ok: true,
+    protocol,
+    port,
+    pathWithQuery: `${parsed.pathname || '/'}${parsed.search || ''}`,
+  }
+}
+
+const createLiveDevSession = ({ projectId, userId, terminalOwnerUserId, terminalId, protocol, port }) => {
+  const sessionId = randomUUID().replace(/-/g, '')
+  const now = Date.now()
+  const expiresAt = now + LIVE_DEV_SESSION_TTL_MS
+
+  liveDevSessions.set(sessionId, {
+    projectId,
+    userId,
+    terminalOwnerUserId,
+    terminalId,
+    protocol,
+    port,
+    createdAt: now,
+    expiresAt,
+  })
+
+  for (const [id, session] of liveDevSessions.entries()) {
+    if (!session || Number(session.expiresAt || 0) <= now) {
+      liveDevSessions.delete(id)
+    }
+  }
+
+  return {
+    sessionId,
+    expiresAt: new Date(expiresAt).toISOString(),
+  }
+}
+
+const resolveLiveDevSession = (sessionId) => {
+  const entry = liveDevSessions.get(String(sessionId || ''))
+  if (!entry) return null
+
+  if (Number(entry.expiresAt || 0) <= Date.now()) {
+    liveDevSessions.delete(String(sessionId || ''))
+    return null
+  }
+
+  const project = projects.get(entry.projectId)
+  if (!project || !project.members.has(entry.userId)) {
+    liveDevSessions.delete(String(sessionId || ''))
+    return null
+  }
+
+  const sessionKey = terminalSessionKey(entry.terminalOwnerUserId, entry.projectId, entry.terminalId)
+  const terminalSession = terminalSessions.get(sessionKey)
+  if (!terminalSession?.child || terminalSession.child.killed) {
+    return null
+  }
+
+  return {
+    session: entry,
+    project,
+  }
+}
+
+const rewriteLiveDevResponseText = (text, sessionId, contentType = '') => {
+  const source = String(text || '')
+  const normalizedType = String(contentType || '').toLowerCase()
+  const basePrefix = `/live-dev/${String(sessionId || '')}`
+  const basePrefixWithSlash = `${basePrefix}/`
+
+  let result = source
+
+  if (normalizedType.includes('text/html')) {
+    if (!/<base\s+href=/i.test(result)) {
+      result = result.replace(/<head([^>]*)>/i, `<head$1>\n    <base href="${basePrefixWithSlash}">`)
+    }
+
+    result = result.replace(/(src|href)=(['"])\/(?!\/)/gi, `$1=$2${basePrefixWithSlash}`)
+    result = result.replace(/url\((['"]?)\/(?!\/)/gi, `url($1${basePrefixWithSlash}`)
+  }
+
+  // Rewrite common dev-server absolute paths to stay under the proxy prefix.
+  result = result.replace(
+    /(["'`])\/(?=(@vite|@react-refresh|src\/|node_modules\/|__vite_ping|__open-in-editor|@id\/|@fs\/|_next\/|static\/))/g,
+    `$1${basePrefixWithSlash}`,
+  )
+
+  return result
+}
+
+const isLiveDevTextResponse = (contentType = '') => {
+  const normalizedType = String(contentType || '').toLowerCase()
+  return (
+    normalizedType.includes('text/html') ||
+    normalizedType.includes('application/javascript') ||
+    normalizedType.includes('text/javascript') ||
+    normalizedType.includes('text/css')
+  )
+}
+
 const buildLiveHtml = (htmlSource, sessionId, version = '') => {
   const basePrefix = `/live/${sessionId}/`
   let html = String(htmlSource || '')
@@ -6946,6 +7070,46 @@ app.post('/api/projects/:projectId/live-session', authMiddleware, async (req, re
   })
 })
 
+app.post('/api/projects/:projectId/terminals/:terminalId/live-dev-session', authMiddleware, async (req, res) => {
+  const { projectId, terminalId } = req.params
+  const { project, error } = assertProjectMembership(projectId, req.userId)
+  if (error) {
+    return res.status(error.status).json({ message: error.message })
+  }
+
+  const normalizedTerminalId = String(terminalId || 'terminal-1').trim() || 'terminal-1'
+  const terminalOwnerUserId = project.sharedTerminalEnabled ? project.ownerId : req.userId
+  const sessionKey = terminalSessionKey(terminalOwnerUserId, projectId, normalizedTerminalId)
+  const terminalSession = terminalSessions.get(sessionKey)
+
+  if (!terminalSession?.child || terminalSession.child.killed) {
+    return res.status(404).json({ message: 'No running terminal process found for this terminal.' })
+  }
+
+  const parsedTarget = parseLoopbackTargetUrl(req.body?.url)
+  if (!parsedTarget.ok) {
+    return res.status(400).json({ message: parsedTarget.message || 'Invalid preview URL' })
+  }
+
+  const { sessionId, expiresAt } = createLiveDevSession({
+    projectId,
+    userId: req.userId,
+    terminalOwnerUserId,
+    terminalId: normalizedTerminalId,
+    protocol: parsedTarget.protocol,
+    port: parsedTarget.port,
+  })
+
+  const origin = `${req.protocol}://${req.get('host')}`
+  const requestedPath = String(parsedTarget.pathWithQuery || '/').trim() || '/'
+  const normalizedPath = requestedPath.startsWith('/') ? requestedPath : `/${requestedPath}`
+
+  return res.json({
+    url: `${origin}/live-dev/${sessionId}${normalizedPath}`,
+    expiresAt,
+  })
+})
+
 app.get('/live/:sessionId/__ping', async (req, res) => {
   const resolved = resolveLivePreviewSession(String(req.params.sessionId || ''))
   if (!resolved) {
@@ -7008,6 +7172,54 @@ app.get(/^\/live\/([^/]+)\/(.+)$/, async (req, res) => {
   const sessionId = String(req.params?.[0] || '')
   const requestedPath = String(req.params?.[1] || '').trim()
   return serveLivePreviewPath(req, res, sessionId, requestedPath)
+})
+
+app.get(/^\/live-dev\/([^/]+)(?:\/(.*))?$/, async (req, res) => {
+  const sessionId = String(req.params?.[0] || '')
+  const resolved = resolveLiveDevSession(sessionId)
+  if (!resolved) {
+    return res.status(404).send('Live dev session not found or expired')
+  }
+
+  const suffix = String(req.params?.[1] || '').trim()
+  const queryIndex = String(req.originalUrl || '').indexOf('?')
+  const query = queryIndex >= 0 ? String(req.originalUrl || '').slice(queryIndex) : ''
+  const targetPath = suffix ? `/${suffix}${query}` : `/${query}`.replace(/\/$/, '/').replace(/^\/?\?/, '/?')
+  const upstreamUrl = `${resolved.session.protocol}//127.0.0.1:${resolved.session.port}${targetPath || '/'}`
+
+  try {
+    const upstreamResponse = await fetch(upstreamUrl, {
+      method: 'GET',
+      headers: {
+        accept: String(req.headers.accept || '*/*'),
+        'accept-language': String(req.headers['accept-language'] || ''),
+        'cache-control': String(req.headers['cache-control'] || ''),
+        pragma: String(req.headers.pragma || ''),
+        'user-agent': String(req.headers['user-agent'] || ''),
+      },
+      signal: AbortSignal.timeout(15000),
+    })
+
+    const contentType = String(upstreamResponse.headers.get('content-type') || '')
+    res.status(upstreamResponse.status)
+    res.setHeader('Cache-Control', 'no-store')
+    if (contentType) {
+      res.setHeader('Content-Type', contentType)
+    }
+
+    if (isLiveDevTextResponse(contentType)) {
+      const text = await upstreamResponse.text()
+      const rewritten = rewriteLiveDevResponseText(text, sessionId, contentType)
+      return res.send(rewritten)
+    }
+
+    const raw = Buffer.from(await upstreamResponse.arrayBuffer())
+    return res.send(raw)
+  } catch (proxyError) {
+    return res
+      .status(502)
+      .send(`Live dev proxy failed: ${proxyError.message || 'Unable to reach local dev server'}`)
+  }
 })
 
 app.get('/api/projects/:projectId/activity', authMiddleware, async (req, res) => {

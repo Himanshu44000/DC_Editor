@@ -1,6 +1,9 @@
 import { useState, useRef, useEffect } from 'react'
 import { getSocket } from '../lib/socket'
 
+const DEFAULT_API_BASE = 'http://localhost:4000/api'
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || DEFAULT_API_BASE).replace(/\/+$/, '')
+
 const stripAnsi = (text = '') => {
   const source = String(text || '')
   let result = ''
@@ -99,7 +102,7 @@ const normalizeAutoTerminalTitles = (terminalList = []) =>
       : terminal,
   )
 
-const renderTextWithLinks = (text) => {
+const renderTextWithLinks = (text, onLinkClick) => {
   const content = String(text || '')
   const parts = content.split(URL_REGEX)
   return parts.map((part, index) => {
@@ -111,6 +114,11 @@ const renderTextWithLinks = (text) => {
           target="_blank"
           rel="noreferrer"
           className="terminal-link"
+          onClick={(event) => {
+            if (typeof onLinkClick === 'function') {
+              onLinkClick(event, part)
+            }
+          }}
           title="Follow link (Ctrl + click)"
         >
           {part}
@@ -153,6 +161,73 @@ const Terminal = ({ projectId, projectName, token, userId, ownerId, sharedTermin
 
   const updateTerminal = (terminalId, updater) => {
     setTerminals((prev) => prev.map((terminal) => (terminal.id === terminalId ? updater(terminal) : terminal)))
+  }
+
+  const appendTerminalMessage = (terminalId, type, text) => {
+    updateTerminal(terminalId, (terminal) => ({
+      ...terminal,
+      history: [...terminal.history, { type, text }],
+    }))
+  }
+
+  const handleTerminalLinkClick = async (event, rawUrl, terminalId) => {
+    const rawValue = String(rawUrl || '').trim()
+    if (!rawValue) return
+
+    let parsedUrl = null
+    try {
+      parsedUrl = new URL(rawValue)
+    } catch {
+      return
+    }
+
+    const hostname = String(parsedUrl.hostname || '').toLowerCase()
+    const isLoopback = hostname === 'localhost' || hostname === '127.0.0.1'
+    if (!isLoopback) {
+      return
+    }
+
+    event.preventDefault()
+
+    const previewTab = window.open('about:blank', '_blank')
+    if (!previewTab) {
+      appendTerminalMessage(terminalId, 'error', 'Popup blocked. Allow popups for this site and try again.')
+      return
+    }
+
+    try {
+      if (!token) {
+        throw new Error('Authentication token missing. Please log in again.')
+      }
+
+      const response = await fetch(`${API_BASE}/projects/${projectId}/terminals/${terminalId}/live-dev-session`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ url: rawValue }),
+      })
+
+      const payload = await response.json().catch(() => ({}))
+      if (!response.ok || !payload?.url) {
+        throw new Error(payload?.message || 'Failed to open live dev preview')
+      }
+
+      previewTab.location.href = String(payload.url)
+      previewTab.focus()
+    } catch (previewError) {
+      try {
+        previewTab.close()
+      } catch {
+        // Ignore tab close failures.
+      }
+      appendTerminalMessage(
+        terminalId,
+        'error',
+        `Unable to open localhost preview from deployed mode: ${previewError.message || 'Unknown error'}`,
+      )
+    }
   }
 
   useEffect(() => {
@@ -860,7 +935,7 @@ const Terminal = ({ projectId, projectName, token, userId, ownerId, sharedTermin
         )}
         {activeTerminal?.history.map((entry, index) => (
           <div key={index} className={`terminal-line terminal-${entry.type}`}>
-            {renderTextWithLinks(entry.text)}
+            {renderTextWithLinks(entry.text, (event, url) => handleTerminalLinkClick(event, url, activeTerminal.id))}
           </div>
         ))}
         {activeTerminal?.isRunning && (
