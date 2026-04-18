@@ -1,10 +1,10 @@
--- Live Collaborative Code Editor - Production Schema (v2.0)
--- Normalized relational design for scalability
--- PostgreSQL schema for manual setup in pgAdmin
+-- Live Collaborative Code Editor - Complete Migration Script (v2.0)
+-- Fixes all constraint conflicts and recreates database schema
+-- PostgreSQL schema for Supabase
 -- Run this entire file once against your target database.
 
 -- ========================================
--- DROP EXISTING TABLES (if migrating from v1.0)
+-- DROP ALL EXISTING TABLES (complete list)
 -- ========================================
 DROP TABLE IF EXISTS collab_refresh_tokens CASCADE;
 DROP TABLE IF EXISTS collab_project_settings CASCADE;

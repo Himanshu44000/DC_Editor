@@ -2,6 +2,13 @@ import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import {
+  resolveExecutionProvider,
+  isJdoodleConfigured,
+  shouldUseRemoteExecutionPrimary,
+  executeWithJdoodle,
+  isInfrastructureLikeExecutionFailure,
+} from './providerRouting.js'
 
 const EXECUTION_CPU_LIMIT = String(process.env.DSA_EXECUTION_CPUS || '1.5').trim()
 const EXECUTION_MEMORY_LIMIT = String(process.env.DSA_EXECUTION_MEMORY || '1024m').trim()
@@ -145,7 +152,11 @@ const runNativeCode = async (runtime, sourceCode) => {
   }
 
   if (runtime === 'python') {
-    return runProcess({ command: 'python', args: ['-'], input: sourceCode })
+    const pythonResult = await runProcess({ command: 'python', args: ['-'], input: sourceCode })
+    if (String(pythonResult?.stderr || '').includes('not recognized') || String(pythonResult?.stderr || '').includes('ENOENT')) {
+      return runProcess({ command: 'py', args: ['-3', '-'], input: sourceCode })
+    }
+    return pythonResult
   }
 
   return {
@@ -157,14 +168,141 @@ const runNativeCode = async (runtime, sourceCode) => {
   }
 }
 
+const runLocalCode = async ({ runtime, sourceCode, stdin = '', useDocker = true }) => {
+  if (useDocker) {
+    const dockerResult = await runDockerCode(runtime, sourceCode, stdin)
+    if (dockerResult.ok || !isInfrastructureLikeExecutionFailure(dockerResult)) {
+      return {
+        ...dockerResult,
+        provider: 'local',
+        remoteAttempted: false,
+        remoteCreditEstimated: 0,
+        cacheable: dockerResult?.cacheable !== false,
+      }
+    }
+
+    return {
+      ...(await runNativeCode(runtime, sourceCode, stdin)),
+      provider: 'local',
+      remoteAttempted: false,
+      remoteCreditEstimated: 0,
+      cacheable: true,
+      fallbackFrom: 'docker',
+    }
+  }
+
+  const nativeResult = await runNativeCode(runtime, sourceCode, stdin)
+  return {
+    ...nativeResult,
+    provider: 'local',
+    remoteAttempted: false,
+    remoteCreditEstimated: 0,
+    cacheable: nativeResult?.cacheable !== false,
+  }
+}
+
 export const executeCode = async ({ runtime, sourceCode, stdin = '', useDocker = true }) => {
-  if (!runtime) {
+  const normalizedRuntime = String(runtime || '').trim().toLowerCase()
+  if (!normalizedRuntime) {
     return { ok: false, exitCode: null, timedOut: false, stdout: '', stderr: 'Runtime is required' }
   }
 
-  if (useDocker) {
-    return runDockerCode(runtime, sourceCode, stdin)
+  const provider = resolveExecutionProvider()
+  const runLocal = async () => runLocalCode({ runtime: normalizedRuntime, sourceCode, stdin, useDocker })
+
+  const jsHybrid = provider === 'hybrid' && normalizedRuntime === 'javascript'
+  if (jsHybrid) {
+    const localResult = await runLocal()
+    if (localResult.ok || !isInfrastructureLikeExecutionFailure(localResult) || !isJdoodleConfigured()) {
+      return localResult
+    }
+
+    const remoteFallbackResult = await executeWithJdoodle({
+      runtime: normalizedRuntime,
+      sourceCode,
+      stdin,
+      timeoutMs: EXECUTION_TIMEOUT_MS,
+    })
+
+    if (remoteFallbackResult.ok) {
+      return {
+        ...remoteFallbackResult,
+        provider: 'jdoodle',
+        fallbackFrom: 'local',
+      }
+    }
+
+    return {
+      ...localResult,
+      remoteAttempted: Boolean(remoteFallbackResult?.remoteAttempted),
+      remoteCreditEstimated: Number(remoteFallbackResult?.remoteCreditEstimated || 0),
+      cacheable: localResult?.cacheable !== false,
+      stderr: [
+        String(localResult.stderr || '').trim(),
+        String(remoteFallbackResult?.stderr || '').trim(),
+      ]
+        .filter(Boolean)
+        .join('\n\n--- JDoodle fallback ---\n'),
+    }
   }
 
-  return runNativeCode(runtime, sourceCode)
+  const remotePrimary = shouldUseRemoteExecutionPrimary(normalizedRuntime, provider)
+  if (remotePrimary) {
+    if (!isJdoodleConfigured()) {
+      if (provider === 'jdoodle') {
+        return {
+          ok: false,
+          exitCode: 1,
+          timedOut: false,
+          stdout: '',
+          stderr: 'JDoodle provider selected but credentials are missing. Set JDOODLE_CLIENT_ID and JDOODLE_CLIENT_SECRET.',
+          provider: 'jdoodle',
+          remoteAttempted: false,
+          remoteCreditEstimated: 0,
+          cacheable: false,
+          errorCategory: 'provider_unavailable',
+        }
+      }
+
+      return runLocal()
+    }
+
+    const remoteResult = await executeWithJdoodle({
+      runtime: normalizedRuntime,
+      sourceCode,
+      stdin,
+      timeoutMs: EXECUTION_TIMEOUT_MS,
+    })
+
+    if (remoteResult.ok || provider === 'jdoodle') {
+      return remoteResult
+    }
+
+    if (!isInfrastructureLikeExecutionFailure(remoteResult)) {
+      return remoteResult
+    }
+
+    const localFallbackResult = await runLocal()
+    if (localFallbackResult.ok) {
+      return {
+        ...localFallbackResult,
+        provider: 'local',
+        fallbackFrom: 'jdoodle',
+        remoteAttempted: Boolean(remoteResult?.remoteAttempted),
+        remoteCreditEstimated: Number(remoteResult?.remoteCreditEstimated || 0),
+      }
+    }
+
+    return {
+      ...remoteResult,
+      stderr: [
+        String(remoteResult.stderr || '').trim(),
+        String(localFallbackResult.stderr || '').trim(),
+      ]
+        .filter(Boolean)
+        .join('\n\n--- Local fallback ---\n'),
+    }
+  }
+
+  return runLocal()
 }

@@ -4,7 +4,7 @@ This project is an optimized MVP for small-team real-time coding collaboration.
 
 ## Included Features
 
-- Authentication with Clerk (sign up, sign in, logout, session management)
+- Authentication with JWT and bcryptjs (sign up, sign in, logout, session management)
 - Project dashboard
 - Create project and join with invite code
 - File explorer tree (create, rename, delete files and folders)
@@ -20,7 +20,7 @@ This project is an optimized MVP for small-team real-time coding collaboration.
 
 - Frontend: React + Vite + React Router + Monaco
 - Backend: Node.js + Express + Socket.IO
-- Auth: Clerk (frontend + backend token verification)
+- Auth: JWT + bcryptjs (custom authentication)
 - Storage: In-memory by default, PostgreSQL when `DATABASE_URL` is provided
 
 ## Run Locally
@@ -33,14 +33,16 @@ This project is an optimized MVP for small-team real-time coding collaboration.
 
 	Set these values in `.env`:
 
-	- `VITE_CLERK_PUBLISHABLE_KEY`
-	- `CLERK_SECRET_KEY`
-	- `DATABASE_URL` (optional)
+	- `JWT_SECRET` - Secret key for signing JWT tokens (change in production!)
+	- `JWT_REFRESH_SECRET` - Secret key for refresh tokens (change in production!)
+	- `DATABASE_URL` (optional) - PostgreSQL connection string
 
 	Example:
 
-	set VITE_CLERK_PUBLISHABLE_KEY=pk_test_xxx
-	set CLERK_SECRET_KEY=sk_test_xxx
+	set JWT_SECRET=your-super-secret-key-min-32-chars-recommended
+	set JWT_REFRESH_SECRET=your-super-secret-refresh-key
+	set JWT_EXPIRATION=15m
+	set REFRESH_TOKEN_EXPIRATION=7d
 
 3. (Optional) Enable PostgreSQL persistence:
 
@@ -66,6 +68,33 @@ Frontend runs on Vite default port and backend on `http://localhost:4000`.
 - With `DATABASE_URL`, users/projects/invites are persisted in PostgreSQL.
 - `viewer` role is read-only (cannot modify files/folders or write to shared terminal).
 - Run supports `.js`, `.py`, `.cpp`, `.java`, `.ts` with Docker isolation when `USE_DOCKER=true`.
+
+## DSA Execution Provider Modes
+
+The DSA run pipeline supports three execution strategies controlled by env vars:
+
+- `DSA_EXECUTION_PROVIDER=local`
+	- Always uses local execution (Docker/native fallback).
+	- No JDoodle credits consumed.
+
+- `DSA_EXECUTION_PROVIDER=jdoodle`
+	- Always uses JDoodle API.
+	- Requires `JDOODLE_CLIENT_ID` and `JDOODLE_CLIENT_SECRET`.
+
+- `DSA_EXECUTION_PROVIDER=hybrid` (recommended)
+	- JavaScript runs local-first.
+	- Python/C++/Java/TypeScript use JDoodle by default.
+	- Includes local fallback on infrastructure failures.
+
+### Cache and Limit Settings
+
+- `DSA_EXECUTION_CACHE_TTL_MS` (default `21600000`, 6h)
+- `DSA_EXECUTION_CACHE_MAX_ENTRIES` (default `5000`)
+- `DSA_REMOTE_GLOBAL_DAILY_LIMIT` (default `20`)
+- `DSA_REMOTE_USER_DAILY_LIMIT` (default `8`)
+- `DSA_REMOTE_USER_PER_MINUTE_LIMIT` (default `2`)
+
+Same code + same input is served from cache while entry TTL is valid.
 
 ## FastAPI Project Structure (Flexible)
 
@@ -117,20 +146,109 @@ This project now supports async code execution jobs with Redis + BullMQ + a sepa
 
 1. Start backend API:
 
-	npm run dev:server
+	npm run start
 
 2. Start execution worker in another terminal:
 
-	npm run dev:worker
+	npm run start:worker
 
 3. Start frontend:
 
-	npm run dev
+	npm run build
+	npm run preview
 
 ### API behavior in queue mode
 
 - `POST /api/projects/:projectId/run` returns `202` with `{ jobId, status: "queued" }`
 - Poll `GET /api/executions/jobs/:jobId` for `queued | running | completed | failed`
+
+## Deploy on Vercel + Render (simple)
+
+Use this repo as a monorepo with 3 deployed services:
+
+1. Frontend on Vercel (static React build)
+2. Backend API on Render (web service)
+3. Execution worker on Render (background worker)
+
+### Why this split
+
+- Frontend serves static files fast on Vercel CDN
+- API handles auth, sockets, project APIs, and queues jobs
+- Worker runs execution jobs separately so API stays responsive
+
+### Service roots
+
+For all 3 services, keep Root Directory as project root.
+This repo uses one package.json for all scripts.
+
+### Vercel setup (frontend)
+
+1. Import repo into Vercel.
+2. Framework preset: Vite.
+3. Build command: npm run build
+4. Output directory: dist
+5. Add frontend env vars:
+
+	VITE_API_BASE_URL (your Render API URL)
+	VITE_SOCKET_URL (optional; defaults to VITE_API_BASE_URL without /api)
+
+6. Deploy.
+
+### Render setup (API)
+
+1. Create Web Service from same repo.
+2. Build command: npm install
+3. Start command: npm run start
+4. Set env vars (minimum):
+
+	PORT=4000
+	NODE_ENV=production
+	DATABASE_URL
+	REDIS_URL
+	USE_EXECUTION_QUEUE=true
+	USE_DOCKER=true
+	JWT_SECRET (change in production!)
+	JWT_REFRESH_SECRET (change in production!)
+	FRONTEND_BASE_URL (your Vercel URL)
+
+5. Deploy API.
+
+### Render setup (worker)
+
+1. Create Background Worker from same repo.
+2. Build command: npm install
+3. Start command: npm run start:worker
+4. Set env vars:
+
+	NODE_ENV=production
+	DATABASE_URL
+	REDIS_URL
+	USE_EXECUTION_QUEUE=true
+	USE_DOCKER=true
+	EXECUTION_WORKER_CONCURRENCY=4
+	DSA_EXECUTION_CPUS=1.5
+	DSA_EXECUTION_MEMORY=1024m
+	DSA_EXECUTION_TIMEOUT_MS=20000
+
+5. Deploy worker.
+
+### What to do with .env.dsa.example
+
+`deploy/dsa/.env.dsa.example` is a template for Docker Compose based DSA deployment.
+
+- Use it if you are running docker-compose stack from `deploy/dsa`.
+- Copy it to `.env.dsa` and fill real values.
+- Do not commit `.env.dsa`.
+
+If you deploy to Vercel + Render, you do not upload `.env.dsa` anywhere.
+Instead, copy the needed key names from it and set them in each service dashboard.
+
+### Final pre-deploy checklist
+
+1. Rotate any exposed secrets.
+2. Confirm DATABASE_URL and REDIS_URL are production endpoints.
+3. Deploy API first, then worker, then frontend.
+4. Test one code execution job end-to-end.
 
 ## Cloudinary Object Storage (optional - production-ready)
 

@@ -1,4 +1,5 @@
-const API_BASE = 'http://localhost:4000/api'
+const DEFAULT_API_BASE = 'http://localhost:4000/api'
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || DEFAULT_API_BASE).replace(/\/+$/, '')
 
 const resolveAuthToken = async (tokenOrProvider) => {
   if (!tokenOrProvider) return null
@@ -35,7 +36,7 @@ export const apiRequest = async (path, options = {}, tokenOrProvider) => {
       }
     }
   } catch {
-    throw new Error('Cannot reach backend server at http://localhost:4000. Start `npm run dev:server`.')
+    throw new Error(`Cannot reach backend server at ${API_BASE}. Check VITE_API_BASE_URL and backend status.`)
   }
 
   const rawBody = await response.text().catch(() => '')

@@ -1,0 +1,98 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: dce-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: dce
+      POSTGRES_USER: dce
+      POSTGRES_PASSWORD: dce_password_change_me
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../../database/schema_pgadmin.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dce -d dce"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  redis:
+    image: redis:7-alpine
+    container_name: dce-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  code-executor-image:
+    image: code-executor:latest
+    build:
+      context: ../../
+      dockerfile: Dockerfile
+    container_name: dce-code-executor-image
+    restart: unless-stopped
+    command: ["bash", "-lc", "tail -f /dev/null"]
+
+  api:
+    build:
+      context: ../../
+      dockerfile: deploy/dsa/Dockerfile.api
+    container_name: dce-api
+    restart: unless-stopped
+    env_file:
+      - .env.dsa
+    environment:
+      PORT: 4000
+      USE_EXECUTION_QUEUE: "true"
+      USE_DOCKER: "false"
+      DATABASE_URL: postgresql://dce:dce_password_change_me@postgres:5432/dce
+      REDIS_URL: redis://redis:6379
+    ports:
+      - "4000:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      code-executor-image:
+        condition: service_started
+
+  worker:
+    build:
+      context: ../../
+      dockerfile: deploy/dsa/Dockerfile.worker
+    container_name: dce-worker
+    restart: unless-stopped
+    env_file:
+      - .env.dsa
+    environment:
+      USE_EXECUTION_QUEUE: "true"
+      USE_DOCKER: "true"
+      DATABASE_URL: postgresql://dce:dce_password_change_me@postgres:5432/dce
+      REDIS_URL: redis://redis:6379
+      EXECUTION_WORKER_CONCURRENCY: 4
+      DSA_EXECUTION_CPUS: "1.5"
+      DSA_EXECUTION_MEMORY: "1024m"
+      DSA_EXECUTION_TIMEOUT_MS: 20000
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      code-executor-image:
+        condition: service_started
+
+volumes:
+  postgres_data:
+  redis_data:

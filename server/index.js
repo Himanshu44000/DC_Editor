@@ -1,8 +1,6 @@
 import dotenv from 'dotenv'
 import express from 'express'
 import cors from 'cors'
-import { clerkMiddleware, getAuth } from '@clerk/express'
-import { verifyToken } from '@clerk/backend'
 import { createServer } from 'node:http'
 import { spawn } from 'node:child_process'
 import { randomUUID, createHash } from 'node:crypto'
@@ -16,15 +14,24 @@ import JSZip from 'jszip'
 import { AccessToken, RoomServiceClient } from 'livekit-server-sdk'
 import { enqueueExecutionJob } from './queue/executionQueue.js'
 import { isRedisConfigured } from './queue/redis.js'
+import {
+  resolveExecutionProvider,
+  isJdoodleConfigured,
+  getJdoodleRuntimeTarget,
+  shouldUseRemoteExecutionPrimary,
+  executeWithJdoodle,
+  isInfrastructureLikeExecutionFailure,
+} from './execution/providerRouting.js'
 import { configureCloudinary, isCloudinaryConfigured } from './storage/cloudinaryClient.js'
 import * as fileStorage from './storage/fileStorage.js'
+import { hashPassword, comparePassword, generateAccessToken, generateRefreshToken, verifyAccessToken, verifyRefreshToken, hashRefreshToken, validateEmail, validatePasswordStrength } from './auth/authService.js'
 
 dotenv.config()
 configureCloudinary()
 
 process.on('unhandledRejection', (reason) => {
   const nestedError = reason?.error
-  const reasonCode = String(reason?.code || nestedError?.code || '')
+    const reasonCode = String(reason?.code || nestedError?.code || '')
   const reasonPath = String(reason?.path || nestedError?.path || '')
   const looksLikeDataTextPath = /data:text[\\/]+plain;base64,?$/i.test(reasonPath)
 
@@ -57,9 +64,8 @@ const io = new Server(httpServer, {
 })
 
 const PORT = process.env.PORT || 4000
-const CLERK_SECRET_KEY = String(process.env.CLERK_SECRET_KEY || '').trim()
-const CLERK_PUBLISHABLE_KEY = String(process.env.CLERK_PUBLISHABLE_KEY || process.env.VITE_CLERK_PUBLISHABLE_KEY || '').trim()
-const CLERK_CLOCK_SKEW_MS = Math.max(0, Number(process.env.CLERK_CLOCK_SKEW_MS || 60000))
+const JWT_SECRET = String(process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-in-production').trim()
+const JWT_REFRESH_SECRET = String(process.env.JWT_REFRESH_SECRET || 'your-super-secret-refresh-key-change-in-production').trim()
 const DATABASE_URL = process.env.DATABASE_URL
 const USE_DOCKER = process.env.USE_DOCKER === 'true'
 const USE_EXECUTION_QUEUE = process.env.USE_EXECUTION_QUEUE === 'true'
@@ -145,14 +151,6 @@ const normalizeAvatarForUi = (value = '') => {
 
 app.use(cors())
 app.use(express.json({ limit: '15mb' }))
-if (CLERK_SECRET_KEY) {
-  app.use(
-    clerkMiddleware({
-      secretKey: CLERK_SECRET_KEY,
-      publishableKey: CLERK_PUBLISHABLE_KEY || undefined,
-    }),
-  )
-}
 
 const users = new Map()
 const usersByEmail = new Map()
@@ -703,7 +701,7 @@ const buildNodeExpressVariantFiles = ({ name, variantId }) => {
     {
       path: 'README.md',
       content:
-        `# ${name}\n\nProduction-ready Node.js + Express starter with common defaults.\n\n## Features\n\n- Express API with structured app/server split\n- Security + DX middleware (` + '`helmet`' + `, ` + '`cors`' + `, ` + '`morgan`' + `)\n- Env loading via ` + '`dotenv`' + `\n- Centralized 404 + error handlers\n- ESLint + Prettier setup\n- Variant: ` + (useTypeScript ? '`TypeScript`' : '`JavaScript`') + `\n\n## Quick Start\n\n1. Install dependencies\n\n   ` + '```bash' + `\n   npm install\n   ` + '```' + `\n\n2. Create environment file\n\n   ` + '```bash' + `\n   cp .env.example .env\n   ` + '```' + `\n\n3. Start development server\n\n   ` + '```bash' + `\n   npm run dev\n   ` + '```' + `\n\n## Scripts\n\n- ` + '`npm run dev`' + `: start dev server\n- ` + '`npm run start`' + `: start production server\n- ` + '`npm run lint`' + `: run ESLint\n- ` + '`npm run lint:fix`' + `: fix lint issues\n- ` + '`npm run format`' + `: format with Prettier\n- ` + '`npm run format:check`' + `: check formatting\n` + (useTypeScript ? '- `npm run build`: compile TypeScript to dist\n- `npm run typecheck`: run TypeScript checks\n' : '') + `\n## Endpoints\n\n- ` + '`GET /health`' + `: API health check\n- ` + '`GET /api`' + `: API welcome response\n`,
+        `# ${name}\n\nProduction-ready Node.js + Express starter with common defaults.\n\n## Features\n\n- Express API with structured app/server split\n- Security + DX middleware (` + '`helmet`' + `, ` + '`cors`' + `, ` + '`morgan`' + `)\n- Env loading via ` + '`dotenv`' + `\n- Centralized 404 + error handlers\n- ESLint + Prettier setup\n- Variant: ` + (useTypeScript ? '`TypeScript`' : '`JavaScript`') + `\n\n## Quick Start\n\n1. Install dependencies\n\n   ` + '```bash' + `\n   npm install\n   ` + '```' + `\n\n2. Create environment file\n\n   ` + '```bash' + `\n   cp .env.example .env\n   ` + '```' + `\n\n3. Start development server\n\n   ` + '```bash' + `\n   npm run dev\n   ` + '```' + `\n\n## Scripts\n\n- ` + '`npm run dev`' + `: start dev server\n- ` + '`npm run start`' + `: start production server\n- ` + '`npm run lint`' + `: run ESLint\n- ` + '`npm run lint:fix`' + `: fix lint issues\n- ` + '`npm run format`' + `: format with Prettier\n- ` + '`npm run format:check`' + `: check formatting\n` + (useTypeScript ? '- `npm run build`: compile TypeScript to dist\n- `npm run typecheck`: run TypeScript checks\n' : '') + `\n## Endpoints\n\n- ` + '`GET /`' + `: API root response\n- ` + '`GET /health`' + `: API health check\n- ` + '`GET /api`' + `: API welcome response\n`,
     },
     {
       path: '.env.example',
@@ -746,8 +744,8 @@ const buildNodeExpressVariantFiles = ({ name, variantId }) => {
     {
       path: 'src/app.' + ext,
       content: useTypeScript
-        ? "import express from 'express'\nimport cors from 'cors'\nimport helmet from 'helmet'\nimport morgan from 'morgan'\nimport { env } from './config/env.js'\nimport apiRouter from './routes/index.js'\nimport { notFoundHandler } from './middleware/notFound.js'\nimport { errorHandler } from './middleware/errorHandler.js'\n\nconst app = express()\n\napp.disable('x-powered-by')\napp.use(helmet())\n\nlet corsOrigin: true | string[] = true\nif (env.CORS_ORIGIN !== '*') {\n  const allowedOrigins = env.CORS_ORIGIN.split(',').map((origin) => origin.trim()).filter(Boolean)\n  corsOrigin = allowedOrigins.length ? allowedOrigins : true\n}\n\napp.use(cors({\n  origin: corsOrigin,\n  credentials: true,\n}))\n\napp.use(express.json({ limit: '1mb' }))\napp.use(express.urlencoded({ extended: true }))\n\nif (env.NODE_ENV !== 'test') {\n  app.use(morgan('dev'))\n}\n\napp.get('/health', (_req, res) => {\n  res.json({\n    ok: true,\n    service: 'api',\n    uptime: process.uptime(),\n    timestamp: new Date().toISOString(),\n  })\n})\n\napp.use('/api', apiRouter)\n\napp.use(notFoundHandler)\napp.use(errorHandler)\n\nexport default app\n"
-        : "import express from 'express'\nimport cors from 'cors'\nimport helmet from 'helmet'\nimport morgan from 'morgan'\nimport { env } from './config/env.js'\nimport apiRouter from './routes/index.js'\nimport { notFoundHandler } from './middleware/notFound.js'\nimport { errorHandler } from './middleware/errorHandler.js'\n\nconst app = express()\n\napp.disable('x-powered-by')\napp.use(helmet())\n\nconst corsOrigin = env.CORS_ORIGIN === '*'\n  ? true\n  : env.CORS_ORIGIN.split(',').map((origin) => origin.trim()).filter(Boolean)\n\napp.use(cors({\n  origin: corsOrigin.length ? corsOrigin : true,\n  credentials: true,\n}))\n\napp.use(express.json({ limit: '1mb' }))\napp.use(express.urlencoded({ extended: true }))\n\nif (env.NODE_ENV !== 'test') {\n  app.use(morgan('dev'))\n}\n\napp.get('/health', (_req, res) => {\n  res.json({\n    ok: true,\n    service: 'api',\n    uptime: process.uptime(),\n    timestamp: new Date().toISOString(),\n  })\n})\n\napp.use('/api', apiRouter)\n\napp.use(notFoundHandler)\napp.use(errorHandler)\n\nexport default app\n",
+        ? "import express from 'express'\nimport cors from 'cors'\nimport helmet from 'helmet'\nimport morgan from 'morgan'\nimport { env } from './config/env.js'\nimport apiRouter from './routes/index.js'\nimport { notFoundHandler } from './middleware/notFound.js'\nimport { errorHandler } from './middleware/errorHandler.js'\n\nconst app = express()\n\napp.disable('x-powered-by')\napp.use(helmet())\n\nlet corsOrigin: true | string[] = true\nif (env.CORS_ORIGIN !== '*') {\n  const allowedOrigins = env.CORS_ORIGIN.split(',').map((origin) => origin.trim()).filter(Boolean)\n  corsOrigin = allowedOrigins.length ? allowedOrigins : true\n}\n\napp.use(cors({\n  origin: corsOrigin,\n  credentials: true,\n}))\n\napp.use(express.json({ limit: '1mb' }))\napp.use(express.urlencoded({ extended: true }))\n\nif (env.NODE_ENV !== 'test') {\n  app.use(morgan('dev'))\n}\n\napp.get('/', (_req, res) => {\n  res.json({\n    ok: true,\n    message: 'Node + Express API is running',\n    endpoints: ['/health', '/api'],\n  })\n})\n\napp.get('/favicon.ico', (_req, res) => {\n  res.status(204).end()\n})\n\napp.get('/health', (_req, res) => {\n  res.json({\n    ok: true,\n    service: 'api',\n    uptime: process.uptime(),\n    timestamp: new Date().toISOString(),\n  })\n})\n\napp.use('/api', apiRouter)\n\napp.use(notFoundHandler)\napp.use(errorHandler)\n\nexport default app\n"
+        : "import express from 'express'\nimport cors from 'cors'\nimport helmet from 'helmet'\nimport morgan from 'morgan'\nimport { env } from './config/env.js'\nimport apiRouter from './routes/index.js'\nimport { notFoundHandler } from './middleware/notFound.js'\nimport { errorHandler } from './middleware/errorHandler.js'\n\nconst app = express()\n\napp.disable('x-powered-by')\napp.use(helmet())\n\nconst corsOrigin = env.CORS_ORIGIN === '*'\n  ? true\n  : env.CORS_ORIGIN.split(',').map((origin) => origin.trim()).filter(Boolean)\n\napp.use(cors({\n  origin: corsOrigin.length ? corsOrigin : true,\n  credentials: true,\n}))\n\napp.use(express.json({ limit: '1mb' }))\napp.use(express.urlencoded({ extended: true }))\n\nif (env.NODE_ENV !== 'test') {\n  app.use(morgan('dev'))\n}\n\napp.get('/', (_req, res) => {\n  res.json({\n    ok: true,\n    message: 'Node + Express API is running',\n    endpoints: ['/health', '/api'],\n  })\n})\n\napp.get('/favicon.ico', (_req, res) => {\n  res.status(204).end()\n})\n\napp.get('/health', (_req, res) => {\n  res.json({\n    ok: true,\n    service: 'api',\n    uptime: process.uptime(),\n    timestamp: new Date().toISOString(),\n  })\n})\n\napp.use('/api', apiRouter)\n\napp.use(notFoundHandler)\napp.use(errorHandler)\n\nexport default app\n",
     },
     {
       path: 'src/server.' + ext,
@@ -1295,7 +1293,7 @@ const PROJECT_TEMPLATES = {
       {
         path: 'start.ps1',
         content:
-          "$ErrorActionPreference = 'Stop'\nSet-Location -Path $PSScriptRoot\n\nWrite-Host '[FastAPI] Starting setup...'\n\nif (-not (Test-Path 'requirements.txt')) {\n  throw '[FastAPI] requirements.txt not found in this folder.'\n}\n\nif (-not (Test-Path '.\\.venv\\Scripts\\python.exe')) {\n  Write-Host '[FastAPI] Creating virtual environment...'\n  if (Get-Command py -ErrorAction SilentlyContinue) {\n    & py -3 -m venv .venv\n  } elseif (Get-Command python -ErrorAction SilentlyContinue) {\n    & python -m venv .venv\n  } else {\n    throw '[FastAPI] Python not found. Install Python 3 and try again.'\n  }\n}\n\nWrite-Host '[FastAPI] Installing/updating dependencies...'\n$pythonExe = '.\\.venv\\Scripts\\python.exe'\n$pipFlags = @('--disable-pip-version-check', '--no-input')\n$uvicornFlags = @('--log-level', 'warning', '--no-access-log')\nif (-not $env:FASTAPI_VERBOSE) {\n  $pipFlags += '-q'\n} else {\n  $uvicornFlags = @('--log-level', 'info')\n}\n$reloadValue = [string]($env:FASTAPI_RELOAD ?? '')\n$reloadValue = $reloadValue.Trim().ToLowerInvariant()\nif ($reloadValue -notin @('0', 'false', 'off', 'no')) {\n  $uvicornFlags += '--reload'\n}\n& $pythonExe -m pip install @pipFlags --upgrade pip\n& $pythonExe -m pip install @pipFlags -r requirements.txt\n\nif (-not (Test-Path '.env') -and (Test-Path '.env.example')) {\n  Copy-Item '.env.example' '.env'\n}\n\n$appTarget = $env:FASTAPI_APP\nif (-not $appTarget) {\n  if (Test-Path 'main.py') {\n    $appTarget = 'main:app'\n  } elseif (Test-Path 'app\\main.py') {\n    $appTarget = 'app.main:app'\n  } elseif (Test-Path 'src\\main.py') {\n    $appTarget = 'src.main:app'\n  } elseif (Test-Path 'app.py') {\n    $appTarget = 'app:app'\n  } else {\n    $appTarget = 'main:app'\n  }\n}\n\nWrite-Host \"[FastAPI] Server running at http://127.0.0.1:8000 ($appTarget)\"\n& $pythonExe -m uvicorn $appTarget @uvicornFlags\n",
+          "$ErrorActionPreference = 'Stop'\nSet-Location -Path $PSScriptRoot\n\nWrite-Host '[FastAPI] Starting setup...'\n\nif (-not (Test-Path 'requirements.txt')) {\n  throw '[FastAPI] requirements.txt not found in this folder.'\n}\n\nif (-not (Test-Path '.\\.venv\\Scripts\\python.exe')) {\n  Write-Host '[FastAPI] Creating virtual environment...'\n  if (Get-Command py -ErrorAction SilentlyContinue) {\n    & py -3 -m venv .venv\n  } elseif (Get-Command python -ErrorAction SilentlyContinue) {\n    & python -m venv .venv\n  } else {\n    throw '[FastAPI] Python not found. Install Python 3 and try again.'\n  }\n}\n\nWrite-Host '[FastAPI] Installing/updating dependencies...'\n$pythonExe = '.\\.venv\\Scripts\\python.exe'\n$pipFlags = @('--disable-pip-version-check', '--no-input')\n$uvicornFlags = @('--log-level', 'warning', '--no-access-log')\nif (-not $env:FASTAPI_VERBOSE) {\n  $pipFlags += '-q'\n} else {\n  $uvicornFlags = @('--log-level', 'info')\n}\n$reloadValue = ''\nif ($null -ne $env:FASTAPI_RELOAD) {\n  $reloadValue = [string]$env:FASTAPI_RELOAD\n}\n$reloadValue = $reloadValue.Trim().ToLowerInvariant()\nif ($reloadValue -notin @('0', 'false', 'off', 'no')) {\n  $uvicornFlags += '--reload'\n}\n& $pythonExe -m pip install @pipFlags --upgrade pip\n& $pythonExe -m pip install @pipFlags -r requirements.txt\n\nif (-not (Test-Path '.env') -and (Test-Path '.env.example')) {\n  Copy-Item '.env.example' '.env'\n}\n\n$appTarget = $env:FASTAPI_APP\nif (-not $appTarget) {\n  if (Test-Path 'main.py') {\n    $appTarget = 'main:app'\n  } elseif (Test-Path 'app\\main.py') {\n    $appTarget = 'app.main:app'\n  } elseif (Test-Path 'src\\main.py') {\n    $appTarget = 'src.main:app'\n  } elseif (Test-Path 'app.py') {\n    $appTarget = 'app:app'\n  } else {\n    $appTarget = 'main:app'\n  }\n}\n\nWrite-Host \"[FastAPI] Server running at http://127.0.0.1:8000 ($appTarget)\"\n& $pythonExe -m uvicorn $appTarget @uvicornFlags\n",
       },
       {
         path: 'start.sh',
@@ -1371,7 +1369,7 @@ const PROJECT_TEMPLATES = {
         {
           path: 'start.ps1',
           content:
-            `$ErrorActionPreference = 'Stop'\nSet-Location -Path $PSScriptRoot\n\n$utf8NoBom = New-Object System.Text.UTF8Encoding($false)\n[Console]::OutputEncoding = $utf8NoBom\n[Console]::InputEncoding = $utf8NoBom\n$OutputEncoding = $utf8NoBom\n\n$env:PYTHONUTF8 = '1'\n$env:PYTHONIOENCODING = 'utf-8'\n\nif (-not (Test-Path '.\\.venv\\Scripts\\python.exe')) {\n  python -m venv .venv\n}\n\n$pythonExe = '.\\.venv\\Scripts\\python.exe'\n& $pythonExe -m pip install --upgrade pip | Out-Null\n& $pythonExe -m pip install -r requirements-dev.txt | Out-Null\n\nif ($args.Count -eq 0) {\n  & $pythonExe -m ${packageName}.main --help\n} else {\n  & $pythonExe -m ${packageName}.main @args\n}\n\n$exitCode = if ($null -ne $LASTEXITCODE) { [int]$LASTEXITCODE } else { 0 }\nexit $exitCode\n`,
+            `$ErrorActionPreference = 'Stop'\nSet-Location -Path $PSScriptRoot\n\n$utf8NoBom = New-Object System.Text.UTF8Encoding($false)\n[Console]::OutputEncoding = $utf8NoBom\n[Console]::InputEncoding = $utf8NoBom\n$OutputEncoding = $utf8NoBom\n\n$env:PYTHONUTF8 = '1'\n$env:PYTHONIOENCODING = 'utf-8'\n\nif (-not (Test-Path '.\\.venv\\Scripts\\python.exe')) {\n  python -m venv .venv\n}\n\n$pythonExe = '.\\.venv\\Scripts\\python.exe'\n& $pythonExe -m pip --version | Out-Null\nif ($LASTEXITCODE -ne 0) {\n  & $pythonExe -m ensurepip --upgrade | Out-Null\n}\n& $pythonExe -m pip install --upgrade pip | Out-Null\n& $pythonExe -m pip install -r requirements-dev.txt | Out-Null\n\nif ($args.Count -eq 0) {\n  & $pythonExe -m ${packageName}.main --help\n} else {\n  & $pythonExe -m ${packageName}.main @args\n}\n\n$exitCode = if ($null -ne $LASTEXITCODE) { [int]$LASTEXITCODE } else { 0 }\nexit $exitCode\n`,
         },
         {
           path: 'start.sh',
@@ -1566,7 +1564,7 @@ const PROJECT_TEMPLATES = {
       {
         path: 'src/index.ts',
         content:
-          "import { createServer } from 'node:http'\nimport { env } from './config/env.js'\nimport { logInfo } from './lib/logger.js'\n\nconst requestListener = (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse): void => {\n  const method = req.method || 'GET'\n  const url = req.url || '/'\n\n  if (method === 'GET' && url === '/health') {\n    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })\n    res.end(JSON.stringify({ ok: true, service: env.APP_NAME, env: env.NODE_ENV, timestamp: new Date().toISOString() }))\n    return\n  }\n\n  if (method === 'GET' && url === '/') {\n    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })\n    res.end(JSON.stringify({ ok: true, message: `${env.APP_NAME} is running`, docs: ['/health'] }))\n    return\n  }\n\n  res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' })\n  res.end(JSON.stringify({ ok: false, message: `Route not found: ${method} ${url}` }))\n}\n\nconst server = createServer(requestListener)\n\nserver.listen(env.PORT, '0.0.0.0', () => {\n  logInfo(`Starting ${env.APP_NAME} in ${env.NODE_ENV} mode`)\n  logInfo(`Server running on http://localhost:${env.PORT}`)\n})\n\nconst shutdown = (signal: NodeJS.Signals): void => {\n  logInfo(`${signal} received, shutting down...`)\n  server.close((error) => {\n    if (error) {\n      console.error(error)\n      process.exit(1)\n    }\n    process.exit(0)\n  })\n}\n\nprocess.on('SIGINT', () => shutdown('SIGINT'))\nprocess.on('SIGTERM', () => shutdown('SIGTERM'))\n",
+          "import { createServer } from 'node:http'\nimport { env } from './config/env.js'\nimport { logInfo } from './lib/logger.js'\n\nconst requestListener = (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse): void => {\n  const method = req.method || 'GET'\n  const url = req.url || '/'\n\n  if (method === 'GET' && url === '/health') {\n    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })\n    res.end(JSON.stringify({ ok: true, service: env.APP_NAME, env: env.NODE_ENV, timestamp: new Date().toISOString() }))\n    return\n  }\n\n  if (method === 'GET' && url === '/') {\n    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })\n    res.end(JSON.stringify({ ok: true, message: `${env.APP_NAME} is running`, docs: ['/health'] }))\n    return\n  }\n\n  res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' })\n  res.end(JSON.stringify({ ok: false, message: `Route not found: ${method} ${url}` }))\n}\n\nconst server = createServer(requestListener)\n\nserver.listen(env.PORT, '0.0.0.0', () => {\n  if (env.NODE_ENV !== 'production') {\n    logInfo(`Starting ${env.APP_NAME} in ${env.NODE_ENV} mode`)\n  }\n  logInfo(`Server running on http://localhost:${env.PORT}`)\n})\n\nconst shutdown = (signal: NodeJS.Signals): void => {\n  logInfo(`${signal} received, shutting down...`)\n  server.close((error) => {\n    if (error) {\n      console.error(error)\n      process.exit(1)\n    }\n    process.exit(0)\n  })\n}\n\nprocess.on('SIGINT', () => shutdown('SIGINT'))\nprocess.on('SIGTERM', () => shutdown('SIGTERM'))\n",
       },
       {
         path: '.vscode/extensions.json',
@@ -1815,6 +1813,11 @@ const EXECUTION_CPU_LIMIT = String(process.env.DSA_EXECUTION_CPUS || '1.5').trim
 const EXECUTION_MEMORY_LIMIT = String(process.env.DSA_EXECUTION_MEMORY || '1024m').trim()
 const EXECUTION_TIMEOUT_MS = Math.max(2000, Number(process.env.DSA_EXECUTION_TIMEOUT_MS || 20000))
 const EXECUTION_STDIN_MAX_BYTES = Math.max(1024, Number(process.env.DSA_STDIN_MAX_BYTES || 262144))
+const DSA_EXECUTION_CACHE_TTL_MS = Math.max(1000, Number(process.env.DSA_EXECUTION_CACHE_TTL_MS || 1000 * 60 * 60 * 6))
+const DSA_EXECUTION_CACHE_MAX_ENTRIES = Math.max(50, Number(process.env.DSA_EXECUTION_CACHE_MAX_ENTRIES || 5000))
+const DSA_REMOTE_GLOBAL_DAILY_LIMIT = Math.max(1, Number(process.env.DSA_REMOTE_GLOBAL_DAILY_LIMIT || 20))
+const DSA_REMOTE_USER_DAILY_LIMIT = Math.max(1, Number(process.env.DSA_REMOTE_USER_DAILY_LIMIT || 8))
+const DSA_REMOTE_USER_PER_MINUTE_LIMIT = Math.max(1, Number(process.env.DSA_REMOTE_USER_PER_MINUTE_LIMIT || 2))
 const TS_NODE_COMPILER_OPTIONS_JSON = '{"module":"CommonJS","moduleResolution":"node"}'
 const DSA_TYPESCRIPT_TSCONFIG = JSON.stringify(
   {
@@ -1831,6 +1834,159 @@ const DSA_TYPESCRIPT_TSCONFIG = JSON.stringify(
   2,
 ) + '\n'
 const DSA_RUNTIME_TMP_ROOT = path.join(os.tmpdir(), 'dc-editor-dsa-runtime')
+const executionResultCache = new Map()
+const executionRemoteUsageState = {
+  dayKey: '',
+  globalCount: 0,
+  userDailyCounts: new Map(),
+  userMinuteWindows: new Map(),
+}
+
+const getUtcDayKey = () => new Date().toISOString().slice(0, 10)
+
+const ensureRemoteUsageDay = () => {
+  const today = getUtcDayKey()
+  if (executionRemoteUsageState.dayKey === today) return
+
+  executionRemoteUsageState.dayKey = today
+  executionRemoteUsageState.globalCount = 0
+  executionRemoteUsageState.userDailyCounts.clear()
+  executionRemoteUsageState.userMinuteWindows.clear()
+}
+
+const makeExecutionCacheKey = ({ runtime, sourceCode, stdin, projectLanguage }) => {
+  const provider = resolveExecutionProvider()
+  const remotePrimary = shouldUseRemoteExecutionPrimary(runtime, provider)
+  const remoteTarget = remotePrimary ? getJdoodleRuntimeTarget(runtime) : null
+
+  return createHash('sha256')
+    .update(
+      JSON.stringify({
+        runtime: String(runtime || '').trim().toLowerCase(),
+        projectLanguage: String(projectLanguage || '').trim().toLowerCase(),
+        provider,
+        remoteLanguage: remoteTarget?.language || null,
+        remoteVersionIndex: remoteTarget?.versionIndex || null,
+        sourceHash: createHash('sha256').update(String(sourceCode || '')).digest('hex'),
+        stdinHash: createHash('sha256').update(String(stdin || '')).digest('hex'),
+      }),
+    )
+    .digest('hex')
+}
+
+const getExecutionCacheResult = (cacheKey) => {
+  const entry = executionResultCache.get(cacheKey)
+  if (!entry) return null
+
+  if (Number(entry.expiresAt || 0) <= Date.now()) {
+    executionResultCache.delete(cacheKey)
+    return null
+  }
+
+  return {
+    ...entry.result,
+    cached: true,
+    cacheAgeMs: Math.max(0, Date.now() - Number(entry.createdAt || Date.now())),
+  }
+}
+
+const setExecutionCacheResult = (cacheKey, result) => {
+  if (!cacheKey || !result) return
+
+  if (executionResultCache.size >= DSA_EXECUTION_CACHE_MAX_ENTRIES) {
+    const oldest = executionResultCache.keys().next().value
+    if (oldest) executionResultCache.delete(oldest)
+  }
+
+  executionResultCache.set(cacheKey, {
+    createdAt: Date.now(),
+    expiresAt: Date.now() + DSA_EXECUTION_CACHE_TTL_MS,
+    result: {
+      ...result,
+      cached: false,
+    },
+  })
+}
+
+const shouldCacheExecutionResult = (result) => {
+  if (!result) return false
+  if (result.cacheable === false) return false
+  if (result.errorCategory === 'provider_unavailable' || result.errorCategory === 'network_error') return false
+  return true
+}
+
+const getRemoteLimitStatus = (userId) => {
+  ensureRemoteUsageDay()
+  const normalizedUserId = String(userId || 'anonymous')
+  const now = Date.now()
+
+  if (executionRemoteUsageState.globalCount >= DSA_REMOTE_GLOBAL_DAILY_LIMIT) {
+    return {
+      ok: false,
+      status: 429,
+      message: `Daily code execution quota reached (${DSA_REMOTE_GLOBAL_DAILY_LIMIT}/${DSA_REMOTE_GLOBAL_DAILY_LIMIT}). Try again after UTC midnight or rely on cached results.`,
+      retryAfterSeconds: 60,
+    }
+  }
+
+  const userDailyCount = Number(executionRemoteUsageState.userDailyCounts.get(normalizedUserId) || 0)
+  if (userDailyCount >= DSA_REMOTE_USER_DAILY_LIMIT) {
+    return {
+      ok: false,
+      status: 429,
+      message: `You have reached your daily execution limit (${DSA_REMOTE_USER_DAILY_LIMIT}/${DSA_REMOTE_USER_DAILY_LIMIT}). Try again after UTC midnight.`,
+      retryAfterSeconds: 60,
+    }
+  }
+
+  const minuteWindow = executionRemoteUsageState.userMinuteWindows.get(normalizedUserId) || {
+    windowStartedAt: now,
+    count: 0,
+  }
+
+  if (now - Number(minuteWindow.windowStartedAt || 0) >= 60000) {
+    minuteWindow.windowStartedAt = now
+    minuteWindow.count = 0
+  }
+
+  if (minuteWindow.count >= DSA_REMOTE_USER_PER_MINUTE_LIMIT) {
+    const elapsed = now - Number(minuteWindow.windowStartedAt || now)
+    const retryAfterSeconds = Math.max(1, Math.ceil((60000 - elapsed) / 1000))
+    return {
+      ok: false,
+      status: 429,
+      message: `Too many runs too quickly. Limit is ${DSA_REMOTE_USER_PER_MINUTE_LIMIT} remote runs per minute. Try again in ${retryAfterSeconds}s.`,
+      retryAfterSeconds,
+    }
+  }
+
+  return { ok: true }
+}
+
+const consumeRemoteLimitSlot = (userId) => {
+  ensureRemoteUsageDay()
+  const normalizedUserId = String(userId || 'anonymous')
+  const now = Date.now()
+
+  executionRemoteUsageState.globalCount += 1
+  executionRemoteUsageState.userDailyCounts.set(
+    normalizedUserId,
+    Number(executionRemoteUsageState.userDailyCounts.get(normalizedUserId) || 0) + 1,
+  )
+
+  const minuteWindow = executionRemoteUsageState.userMinuteWindows.get(normalizedUserId) || {
+    windowStartedAt: now,
+    count: 0,
+  }
+
+  if (now - Number(minuteWindow.windowStartedAt || 0) >= 60000) {
+    minuteWindow.windowStartedAt = now
+    minuteWindow.count = 0
+  }
+
+  minuteWindow.count += 1
+  executionRemoteUsageState.userMinuteWindows.set(normalizedUserId, minuteWindow)
+}
 
 const ensureDsaRuntimeTempRoot = () => {
   if (!fs.existsSync(DSA_RUNTIME_TMP_ROOT)) {
@@ -1974,11 +2130,15 @@ const runDockerCode = async (runtime, sourceCode, stdinInput = '') => {
   }
 }
 
-const runCode = async (runtime, sourceCode, stdinInput = '') => {
+const runCodeLocal = async (runtime, sourceCode, stdinInput = '') => {
   // Try Docker first if enabled and available
   if (USE_DOCKER) {
     try {
-      return await runDockerCode(runtime, sourceCode, stdinInput)
+      const dockerResult = await runDockerCode(runtime, sourceCode, stdinInput)
+      if (dockerResult.ok || !isInfrastructureLikeExecutionFailure(dockerResult)) {
+        return dockerResult
+      }
+      console.warn('Docker execution unavailable, falling back to native:', dockerResult.stderr)
     } catch (error) {
       console.error('Docker execution failed, falling back to native:', error.message)
       // Fall through to native execution
@@ -2192,6 +2352,118 @@ const runCode = async (runtime, sourceCode, stdinInput = '') => {
     stdout: '',
     stderr: `Unsupported runtime: ${runtime}. Supported: JavaScript (.js), Python (.py), C++ (.cpp), Java (.java), TypeScript (.ts)`,
   }
+}
+
+const runCode = async (runtime, sourceCode, stdinInput = '') => {
+  const normalizedRuntime = String(runtime || '').trim().toLowerCase()
+  const provider = resolveExecutionProvider()
+  const runLocal = async () => {
+    const localResult = await runCodeLocal(normalizedRuntime, sourceCode, stdinInput)
+    return {
+      ...localResult,
+      provider: 'local',
+      remoteAttempted: false,
+      remoteCreditEstimated: 0,
+      cacheable: localResult?.cacheable !== false,
+    }
+  }
+
+  const jsHybrid = provider === 'hybrid' && normalizedRuntime === 'javascript'
+
+  if (jsHybrid) {
+    const localResult = await runLocal()
+    if (localResult.ok || !isInfrastructureLikeExecutionFailure(localResult) || !isJdoodleConfigured()) {
+      return localResult
+    }
+
+    const remoteFallbackResult = await executeWithJdoodle({
+      runtime: normalizedRuntime,
+      sourceCode,
+      stdin: stdinInput,
+      timeoutMs: EXECUTION_TIMEOUT_MS,
+    })
+
+    if (remoteFallbackResult.ok) {
+      return {
+        ...remoteFallbackResult,
+        provider: 'jdoodle',
+        fallbackFrom: 'local',
+      }
+    }
+
+    return {
+      ...localResult,
+      remoteAttempted: Boolean(remoteFallbackResult?.remoteAttempted),
+      remoteCreditEstimated: Number(remoteFallbackResult?.remoteCreditEstimated || 0),
+      cacheable: localResult?.cacheable !== false,
+      stderr: [
+        String(localResult.stderr || '').trim(),
+        String(remoteFallbackResult?.stderr || '').trim(),
+      ]
+        .filter(Boolean)
+        .join('\n\n--- JDoodle fallback ---\n'),
+    }
+  }
+
+  const remotePrimary = shouldUseRemoteExecutionPrimary(normalizedRuntime, provider)
+  if (remotePrimary) {
+    if (!isJdoodleConfigured()) {
+      if (provider === 'jdoodle') {
+        return {
+          ok: false,
+          exitCode: 1,
+          timedOut: false,
+          stdout: '',
+          stderr: 'JDoodle provider selected but credentials are missing. Set JDOODLE_CLIENT_ID and JDOODLE_CLIENT_SECRET.',
+          provider: 'jdoodle',
+          remoteAttempted: false,
+          remoteCreditEstimated: 0,
+          cacheable: false,
+          errorCategory: 'provider_unavailable',
+        }
+      }
+
+      return runLocal()
+    }
+
+    const remoteResult = await executeWithJdoodle({
+      runtime: normalizedRuntime,
+      sourceCode,
+      stdin: stdinInput,
+      timeoutMs: EXECUTION_TIMEOUT_MS,
+    })
+
+    if (remoteResult.ok || provider === 'jdoodle') {
+      return remoteResult
+    }
+
+    if (!isInfrastructureLikeExecutionFailure(remoteResult)) {
+      return remoteResult
+    }
+
+    const localFallbackResult = await runLocal()
+    if (localFallbackResult.ok) {
+      return {
+        ...localFallbackResult,
+        provider: 'local',
+        fallbackFrom: 'jdoodle',
+        remoteAttempted: Boolean(remoteResult?.remoteAttempted),
+        remoteCreditEstimated: Number(remoteResult?.remoteCreditEstimated || 0),
+      }
+    }
+
+    return {
+      ...remoteResult,
+      stderr: [
+        String(remoteResult.stderr || '').trim(),
+        String(localFallbackResult.stderr || '').trim(),
+      ]
+        .filter(Boolean)
+        .join('\n\n--- Local fallback ---\n'),
+    }
+  }
+
+  return runLocal()
 }
 
 // Interactive code execution with real-time I/O (for WebSocket)
@@ -3221,14 +3493,13 @@ const persistUser = async (user) => {
   }
   await dbClient.query(
     `INSERT INTO collab_users (
-       id, clerk_id, email, name, avatar_url, bio, pronouns, company, location,
+       id, email, name, avatar_url, bio, pronouns, company, location,
        job_title, website_url, github_profile, linkedin_url, portfolio_url, skills,
-       github_username, github_access_token, github_token_scope, github_connected_at,
+       github_username, github_access_token, github_token_scope, github_connected_at, password_hash,
        updated_at, last_active_at
      )
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, NOW(), NOW())
      ON CONFLICT (id) DO UPDATE SET
-       clerk_id = EXCLUDED.clerk_id,
        email = EXCLUDED.email,
        name = EXCLUDED.name,
        avatar_url = EXCLUDED.avatar_url,
@@ -3246,10 +3517,10 @@ const persistUser = async (user) => {
        github_access_token = EXCLUDED.github_access_token,
        github_token_scope = EXCLUDED.github_token_scope,
        github_connected_at = EXCLUDED.github_connected_at,
+       password_hash = EXCLUDED.password_hash,
        updated_at = NOW(),
        last_active_at = NOW()`,
     [
-      user.id,
       user.id,
       user.email,
       user.name,
@@ -3268,6 +3539,7 @@ const persistUser = async (user) => {
       String(user.githubAccessToken || ''),
       String(user.githubTokenScope || ''),
       user.githubConnectedAt || null,
+      user.passwordHash || '',
     ],
   )
 }
@@ -3950,7 +4222,12 @@ const initDb = async () => {
     return
   }
 
-  dbClient = new Client({ connectionString: DATABASE_URL })
+  const clientConfig = {
+    connectionString: DATABASE_URL,
+    ssl: process.env.NODE_ENV === 'production' ? true : { rejectUnauthorized: false }
+  }
+  
+  dbClient = new Client(clientConfig)
   await dbClient.connect()
 
   await dbClient.query('ALTER TABLE collab_users ADD COLUMN IF NOT EXISTS avatar_url TEXT')
@@ -4167,26 +4444,11 @@ const isSyntheticUserName = (name) => {
   return /^user[-_][a-z0-9]/i.test(normalized)
 }
 
-const parseUserFromClaims = (userId, claims = {}) => {
-  const email =
-    claims.email ||
-    claims.email_address ||
-    claims?.primary_email_address?.email_address ||
-    claims?.email_addresses?.[0]?.email_address ||
-    `${userId}@clerk.local`
-
-  const name =
-    claims.name ||
-    [claims.first_name, claims.last_name].filter(Boolean).join(' ') ||
-    [claims.given_name, claims.family_name].filter(Boolean).join(' ') ||
-    claims.username ||
-    String(email).split('@')[0] ||
-    `User-${String(userId).slice(0, 6)}`
-
+const parseUserFromClaims = (userId, email) => {
   return {
     id: userId,
     email: String(email).toLowerCase(),
-    name: String(name).trim(),
+    name: String(email).split('@')[0] || `User-${String(userId).slice(0, 6)}`,
     avatarUrl: '',
     bio: '',
     pronouns: '',
@@ -4202,76 +4464,53 @@ const parseUserFromClaims = (userId, claims = {}) => {
     githubAccessToken: '',
     githubTokenScope: '',
     githubConnectedAt: null,
-    passwordHash: '__clerk__',
+    passwordHash: '',
   }
 }
 
-const ensureUserFromClaims = async (userId, claims = {}) => {
-  if (!userId) return null
+const ensureUserFromJWT = async (userId, email) => {
+  if (!userId || !email) return null
+  
   const existing = users.get(userId)
   if (existing) {
-    const parsed = parseUserFromClaims(userId, claims)
-    const nextName = parsed.name?.trim()
-    const existingName = existing.name?.trim()
-    const shouldUpgradeName =
-      nextName && (!existingName || /^user[-_]/i.test(existingName) || existingName === String(existing.email).split('@')[0])
-
-    if (shouldUpgradeName || (!existing.email && parsed.email)) {
-      const updated = {
-        ...existing,
-        name: shouldUpgradeName ? nextName : existing.name,
-        email: existing.email || parsed.email,
-      }
-      users.set(updated.id, updated)
-      usersByEmail.set(updated.email, updated.id)
-      await persistUser(updated)
-      return updated
-    }
-
     return existing
   }
 
-  const user = parseUserFromClaims(userId, claims)
+  // Create new user from JWT claims
+  const user = parseUserFromClaims(userId, email)
   users.set(user.id, user)
   usersByEmail.set(user.email, user.id)
   await persistUser(user)
   return user
 }
 
-const verifyClerkAuthToken = async (token) =>
-  verifyToken(token, {
-    secretKey: CLERK_SECRET_KEY,
-    clockSkewInMs: CLERK_CLOCK_SKEW_MS,
-  })
+const verifyClerkAuthToken = async (token) => {
+  try {
+    return verifyAccessToken(token)
+  } catch (error) {
+    throw error
+  }
+}
 
 const authMiddleware = async (req, res, next) => {
-  if (!CLERK_SECRET_KEY) {
-    return res.status(500).json({ message: 'CLERK_SECRET_KEY is not configured' })
-  }
-
   try {
-    const auth = getAuth(req)
-
-    if (auth?.userId) {
-      req.userId = auth.userId
-      await ensureUserFromClaims(auth.userId, auth.sessionClaims || {})
-      return next()
-    }
-
     const header = req.headers.authorization || req.headers.Authorization
     const bearer = typeof header === 'string' && header.startsWith('Bearer ') ? header.slice(7).trim() : ''
+    
     if (!bearer) {
-      return res.status(401).json({ message: 'Unauthorized' })
+      return res.status(401).json({ message: 'Unauthorized: No token provided' })
     }
 
-    const payload = await verifyClerkAuthToken(bearer)
+    const payload = verifyAccessToken(bearer)
     req.userId = payload.sub
-    await ensureUserFromClaims(payload.sub, payload)
-
+    req.userEmail = payload.email
+    
+    // Ensure user exists in memory
+    await ensureUserFromJWT(payload.sub, payload.email)
     next()
   } catch (error) {
     return res.status(401).json({
-      message: `Invalid token${error?.message ? `: ${error.message}` : ''}`,
+      message: `Invalid token: ${error.message}`,
     })
   }
 }
@@ -5686,6 +5925,195 @@ app.get('/api/templates', (req, res) => {
   }
 
   res.json({ templates })
+})
+
+// ========================================
+// AUTHENTICATION ENDPOINTS
+// ========================================
+
+app.post('/api/auth/signup', async (req, res) => {
+  try {
+    const { email, password, name } = req.body
+
+    // Validation
+    if (!email || !password) {
+      return res.status(400).json({ message: 'Email and password are required' })
+    }
+
+    if (!validateEmail(email)) {
+      return res.status(400).json({ message: 'Invalid email format' })
+    }
+
+    const { isValid, errors } = validatePasswordStrength(password)
+    if (!isValid) {
+      return res.status(400).json({ message: 'Password is too weak', errors })
+    }
+
+    // Check if user already exists
+    if (usersByEmail.has(email.toLowerCase())) {
+      return res.status(409).json({ message: 'Email already registered' })
+    }
+
+    // Hash password
+    const passwordHash = await hashPassword(password)
+    const userId = randomUUID()
+
+    // Create user
+    const user = {
+      id: userId,
+      email: email.toLowerCase(),
+      name: name ? String(name).trim() : String(email).split('@')[0],
+      avatarUrl: '',
+      bio: '',
+      pronouns: '',
+      company: '',
+      location: '',
+      jobTitle: '',
+      websiteUrl: '',
+      githubProfile: '',
+      linkedinUrl: '',
+      portfolioUrl: '',
+      skills: '',
+      githubUsername: '',
+      githubAccessToken: '',
+      githubTokenScope: '',
+      githubConnectedAt: null,
+      passwordHash,
+      created_at: new Date(),
+      updated_at: new Date(),
+    }
+
+    users.set(user.id, user)
+    usersByEmail.set(user.email, user.id)
+    await persistUser(user)
+
+    // Generate tokens
+    const accessToken = generateAccessToken(user.id, user.email)
+    const refreshToken = generateRefreshToken(user.id)
+    const refreshTokenHash = hashRefreshToken(refreshToken)
+
+    // Store refresh token in database
+    if (dbClient) {
+      await dbClient.query(
+        'INSERT INTO collab_refresh_tokens (id, user_id, token_hash, expires_at) VALUES ($1, $2, $3, $4)',
+        [randomUUID(), user.id, refreshTokenHash, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)]
+      )
+    }
+
+    res.status(201).json({
+      user: sanitizeUser(user),
+      accessToken,
+      refreshToken,
+    })
+  } catch (error) {
+    console.error('Signup error:', error)
+    res.status(500).json({ message: 'Failed to create account', error: error.message })
+  }
+})
+
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body
+
+    if (!email || !password) {
+      return res.status(400).json({ message: 'Email and password are required' })
+    }
+
+    const userId = usersByEmail.get(email.toLowerCase())
+    if (!userId) {
+      return res.status(401).json({ message: 'Invalid email or password' })
+    }
+
+    const user = users.get(userId)
+    if (!user) {
+      return res.status(401).json({ message: 'Invalid email or password' })
+    }
+
+    // Check password
+    const passwordMatch = await comparePassword(password, user.passwordHash)
+    if (!passwordMatch) {
+      return res.status(401).json({ message: 'Invalid email or password' })
+    }
+
+    // Generate tokens
+    const accessToken = generateAccessToken(user.id, user.email)
+    const refreshToken = generateRefreshToken(user.id)
+    const refreshTokenHash = hashRefreshToken(refreshToken)
+
+    // Store refresh token in database
+    if (dbClient) {
+      await dbClient.query(
+        'INSERT INTO collab_refresh_tokens (id, user_id, token_hash, expires_at) VALUES ($1, $2, $3, $4)',
+        [randomUUID(), user.id, refreshTokenHash, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)]
+      )
+    }
+
+    res.json({
+      user: sanitizeUser(user),
+      accessToken,
+      refreshToken,
+    })
+  } catch (error) {
+    console.error('Login error:', error)
+    res.status(500).json({ message: 'Failed to login', error: error.message })
+  }
+})
+
+app.post('/api/auth/refresh', async (req, res) => {
+  try {
+    const { refreshToken } = req.body
+
+    if (!refreshToken) {
+      return res.status(400).json({ message: 'Refresh token is required' })
+    }
+
+    // Verify refresh token
+    const payload = verifyRefreshToken(refreshToken)
+    const userId = payload.sub
+
+    // Check if token is revoked in database
+    if (dbClient) {
+      const result = await dbClient.query(
+        'SELECT * FROM collab_refresh_tokens WHERE user_id = $1 AND token_hash = $2 AND revoked_at IS NULL',
+        [userId, hashRefreshToken(refreshToken)]
+      )
+      if (result.rows.length === 0) {
+        return res.status(401).json({ message: 'Refresh token has been revoked' })
+      }
+    }
+
+    const user = users.get(userId)
+    if (!user) {
+      return res.status(401).json({ message: 'User not found' })
+    }
+
+    // Generate new access token
+    const newAccessToken = generateAccessToken(user.id, user.email)
+
+    res.json({ accessToken: newAccessToken })
+  } catch (error) {
+    console.error('Token refresh error:', error)
+    res.status(401).json({ message: 'Invalid refresh token', error: error.message })
+  }
+})
+
+app.post('/api/auth/logout', authMiddleware, async (req, res) => {
+  try {
+    const { refreshToken } = req.body
+
+    if (refreshToken && dbClient) {
+      // Revoke refresh token in database
+      await dbClient.query(
+        'UPDATE collab_refresh_tokens SET revoked_at = NOW() WHERE user_id = $1 AND token_hash = $2',
+        [req.userId, hashRefreshToken(refreshToken)]
+      )
+    }
+
+    res.json({ message: 'Logged out successfully' })
+  } catch (error) {
+    console.error('Logout error:', error)
+    res.status(500).json({ message: 'Failed to logout', error: error.message })
+  }
 })
 
 app.get('/api/me', authMiddleware, (req, res) => {
@@ -7445,6 +7873,51 @@ app.post('/api/projects/:projectId/run', authMiddleware, async (req, res) => {
     const sourceCode =
       typeof file.content === 'string' ? file.content : ((await getFileContent(projectId, file.id)) ?? '')
 
+    const cacheKey = makeExecutionCacheKey({
+      runtime,
+      sourceCode,
+      stdin: stdinText,
+      projectLanguage: project?.language,
+    })
+    const cachedResult = getExecutionCacheResult(cacheKey)
+    if (cachedResult) {
+      await recordProjectEvent({
+        projectId,
+        userId: req.userId,
+        actionType: 'execution_completed',
+        resourceType: 'execution',
+        details: { runtime, filePath: file.path || file.name, ok: Boolean(cachedResult?.ok), cached: true },
+        activityType: 'execution_completed',
+        activityData: {
+          runtime,
+          filePath: file.path || file.name,
+          ok: Boolean(cachedResult?.ok),
+          cached: true,
+          actorName: users.get(req.userId)?.name || '',
+        },
+      })
+
+      return res.json({
+        queued: false,
+        runtime,
+        filePath: file.path || file.name,
+        ...cachedResult,
+      })
+    }
+
+    const executionProvider = resolveExecutionProvider()
+    const remotePrimary = shouldUseRemoteExecutionPrimary(runtime, executionProvider)
+    if (remotePrimary) {
+      const remoteLimitStatus = getRemoteLimitStatus(req.userId)
+      if (!remoteLimitStatus.ok) {
+        return res.status(remoteLimitStatus.status || 429).json({
+          message: remoteLimitStatus.message,
+          retryAfterSeconds: remoteLimitStatus.retryAfterSeconds,
+          provider: executionProvider,
+        })
+      }
+    }
+
     if (USE_EXECUTION_QUEUE) {
       if (!isRedisConfigured()) {
         return res.status(500).json({ message: 'Execution queue is enabled but REDIS_URL is missing' })
@@ -7462,6 +7935,10 @@ app.post('/api/projects/:projectId/run', authMiddleware, async (req, res) => {
         filePath: file.path || file.name,
         stdin: stdinText,
         sourceCode,
+      }
+
+      if (remotePrimary && isJdoodleConfigured()) {
+        consumeRemoteLimitSlot(req.userId)
       }
 
       await createExecutionJob(payload)
@@ -7487,6 +7964,13 @@ app.post('/api/projects/:projectId/run', authMiddleware, async (req, res) => {
     }
 
     const result = await runCode(runtime, sourceCode, stdinText)
+    if (result?.remoteAttempted) {
+      consumeRemoteLimitSlot(req.userId)
+    }
+    if (shouldCacheExecutionResult(result)) {
+      setExecutionCacheResult(cacheKey, result)
+    }
+
     await recordProjectEvent({
       projectId,
       userId: req.userId,
@@ -7572,8 +8056,8 @@ const broadcastProjectSnapshot = async (projectId, project) => {
 }
 
 io.use(async (socket, next) => {
-  if (!CLERK_SECRET_KEY) {
-    return next(new Error('CLERK_SECRET_KEY is not configured'))
+  if (!JWT_SECRET) {
+    return next(new Error('JWT_SECRET is not configured'))
   }
 
   const token = socket.handshake.auth?.token
@@ -7582,9 +8066,9 @@ io.use(async (socket, next) => {
   }
 
   try {
-    const payload = await verifyClerkAuthToken(token)
+    const payload = verifyAccessToken(token)
     socket.userId = payload.sub
-    const user = await ensureUserFromClaims(payload.sub, payload)
+    const user = await ensureUserFromJWT(payload.sub, payload.email)
     socket.userName = user?.name?.trim() || user?.email?.split('@')[0] || `User-${String(payload.sub).slice(0, 6)}`
     return next()
   } catch {
@@ -8322,8 +8806,6 @@ io.on('connection', (socket) => {
         code,
         signal,
       })
-
-      cleanupWorkspaceDirIfUnused(session.workspaceDir, sessionKey)
 
       broadcastProjectSnapshot(projectId, project).catch(() => {})
     })

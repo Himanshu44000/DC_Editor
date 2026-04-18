@@ -3,11 +3,15 @@ import { io } from 'socket.io-client'
 let socket = null
 let socketToken = null
 
+const DEFAULT_API_BASE = 'http://localhost:4000/api'
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || DEFAULT_API_BASE).replace(/\/+$/, '')
+const SOCKET_URL = (import.meta.env.VITE_SOCKET_URL || API_BASE.replace(/\/api$/, '')).replace(/\/+$/, '')
+
 export const getSocket = (token) => {
   if (!token) return null
 
   if (!socket) {
-    socket = io('http://localhost:4000', {
+    socket = io(SOCKET_URL, {
       auth: { token },
       transports: ['websocket'],
     })
