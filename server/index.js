@@ -10,6 +10,7 @@ import { Client } from 'pg'
 import os from 'node:os'
 import fs from 'fs'
 import path from 'path'
+import net from 'node:net'
 import JSZip from 'jszip'
 import { AccessToken, RoomServiceClient } from 'livekit-server-sdk'
 import { enqueueExecutionJob } from './queue/executionQueue.js'
@@ -181,6 +182,7 @@ const TERMINAL_WORKSPACE_EPHEMERAL = String(process.env.TERMINAL_WORKSPACE_EPHEM
 const LOCAL_STATE_PATH = path.join(process.cwd(), '.collab-state.json')
 const LIVE_PREVIEW_SESSION_TTL_MS = 1000 * 60 * 60 * 6
 const LIVE_DEV_SESSION_TTL_MS = 1000 * 60 * 30
+const LIVE_DEV_UPSTREAM_TIMEOUT_MS = 15000
 let dbClient = null
 
 const scheduleProjectPersist = (projectId, delayMs = PROJECT_PERSIST_DEBOUNCE_MS) => {
@@ -3776,12 +3778,43 @@ const parseLoopbackTargetUrl = (rawUrl = '') => {
   return {
     ok: true,
     protocol,
+    hostname,
     port,
     pathWithQuery: `${parsed.pathname || '/'}${parsed.search || ''}`,
   }
 }
 
-const createLiveDevSession = ({ projectId, userId, terminalOwnerUserId, terminalId, protocol, port }) => {
+const normalizeLoopbackHost = (value = '') => {
+  const normalized = String(value || '').trim().toLowerCase().replace(/^\[(.*)\]$/, '$1')
+  return normalized
+}
+
+const buildLoopbackHostCandidates = (preferredHost = '') => {
+  const candidates = []
+  const pushHost = (value) => {
+    const normalized = normalizeLoopbackHost(value)
+    if (!normalized) return
+    if (!['localhost', '127.0.0.1', '::1'].includes(normalized)) return
+    if (!candidates.includes(normalized)) {
+      candidates.push(normalized)
+    }
+  }
+
+  pushHost(preferredHost)
+  pushHost('localhost')
+  pushHost('127.0.0.1')
+  pushHost('::1')
+
+  return candidates
+}
+
+const formatHostForUrl = (host = '') => {
+  const normalized = normalizeLoopbackHost(host)
+  if (!normalized) return 'localhost'
+  return normalized.includes(':') ? `[${normalized}]` : normalized
+}
+
+const createLiveDevSession = ({ projectId, userId, terminalOwnerUserId, terminalId, protocol, hostname, port }) => {
   const sessionId = randomUUID().replace(/-/g, '')
   const now = Date.now()
   const expiresAt = now + LIVE_DEV_SESSION_TTL_MS
@@ -3792,6 +3825,7 @@ const createLiveDevSession = ({ projectId, userId, terminalOwnerUserId, terminal
     terminalOwnerUserId,
     terminalId,
     protocol,
+    hostname: normalizeLoopbackHost(hostname) || 'localhost',
     port,
     createdAt: now,
     expiresAt,
@@ -3859,6 +3893,9 @@ const rewriteLiveDevResponseText = (text, sessionId, contentType = '') => {
     `$1${basePrefixWithSlash}`,
   )
 
+  // Ensure Vite HMR websocket carries live-dev session id for upgrade proxy routing.
+  result = result.replace(/\?token=\$\{wsToken\}/g, `?token=\${wsToken}&dcsid=${String(sessionId || '')}`)
+
   return result
 }
 
@@ -3870,6 +3907,175 @@ const isLiveDevTextResponse = (contentType = '') => {
     normalizedType.includes('text/javascript') ||
     normalizedType.includes('text/css')
   )
+}
+
+const fetchLiveDevUpstream = async ({ session, targetPath, req }) => {
+  const normalizedPath = (() => {
+    const value = String(targetPath || '').trim()
+    if (!value) return '/'
+    return value.startsWith('/') ? value : `/${value}`
+  })()
+
+  const hostCandidates = buildLoopbackHostCandidates(session?.hostname)
+  const errors = []
+
+  for (const host of hostCandidates) {
+    const upstreamUrl = `${session.protocol}//${formatHostForUrl(host)}:${session.port}${normalizedPath}`
+
+    try {
+      const upstreamResponse = await fetch(upstreamUrl, {
+        method: 'GET',
+        headers: {
+          accept: String(req.headers.accept || '*/*'),
+          'accept-language': String(req.headers['accept-language'] || ''),
+          'cache-control': String(req.headers['cache-control'] || ''),
+          pragma: String(req.headers.pragma || ''),
+          'user-agent': String(req.headers['user-agent'] || ''),
+        },
+        signal: AbortSignal.timeout(LIVE_DEV_UPSTREAM_TIMEOUT_MS),
+      })
+
+      return { ok: true, upstreamResponse, upstreamUrl, upstreamHost: host }
+    } catch (error) {
+      errors.push(`${host}: ${error?.message || 'fetch failed'}`)
+    }
+  }
+
+  return {
+    ok: false,
+    errorMessage: errors.join(' | ') || 'fetch failed',
+  }
+}
+
+const buildWebSocketProxyRequest = (req, upstreamPath, host, port) => {
+  const requestLine = `GET ${upstreamPath || '/'} HTTP/${req.httpVersion || '1.1'}`
+  const lines = [requestLine]
+  const normalizedHost = normalizeLoopbackHost(host)
+  const hostHeader = normalizedHost && normalizedHost.includes(':') ? `[${normalizedHost}]:${port}` : `${normalizedHost || 'localhost'}:${port}`
+
+  const filteredHeaders = {
+    ...req.headers,
+    host: hostHeader,
+    connection: 'Upgrade',
+    upgrade: 'websocket',
+  }
+
+  for (const [name, rawValue] of Object.entries(filteredHeaders)) {
+    if (rawValue == null) continue
+    if (Array.isArray(rawValue)) {
+      for (const value of rawValue) {
+        if (value == null) continue
+        lines.push(`${name}: ${value}`)
+      }
+      continue
+    }
+    lines.push(`${name}: ${rawValue}`)
+  }
+
+  lines.push('', '')
+  return lines.join('\r\n')
+}
+
+const writeUpgradeError = (socket, statusCode, statusText, message = '') => {
+  if (!socket || socket.destroyed) return
+  const body = String(message || '').trim()
+  const statusLine = `HTTP/1.1 ${statusCode} ${statusText}`
+  if (!body) {
+    socket.write(`${statusLine}\r\nConnection: close\r\n\r\n`)
+    socket.destroy()
+    return
+  }
+
+  socket.write(
+    `${statusLine}\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`,
+  )
+  socket.destroy()
+}
+
+const handleLiveDevWebSocketUpgrade = async (request, socket, head) => {
+  const parsed = (() => {
+    try {
+      return new URL(String(request.url || '/'), 'http://localhost')
+    } catch {
+      return null
+    }
+  })()
+
+  const sessionId = String(parsed?.searchParams.get('dcsid') || '').trim()
+  if (!sessionId) {
+    return false
+  }
+
+  const resolved = resolveLiveDevSession(sessionId)
+  if (!resolved) {
+    writeUpgradeError(socket, 404, 'Not Found', 'Live dev session not found or expired')
+    return true
+  }
+
+  parsed.searchParams.delete('dcsid')
+  const targetPath = `${parsed.pathname || '/'}${parsed.search || ''}` || '/'
+  const hostCandidates = buildLoopbackHostCandidates(resolved.session.hostname)
+  const errors = []
+
+  for (const host of hostCandidates) {
+    const forwarded = await new Promise((resolve) => {
+      const upstream = net.connect({ host, port: Number(resolved.session.port) })
+      let settled = false
+
+      const finish = (value) => {
+        if (settled) return
+        settled = true
+        resolve(value)
+      }
+
+      upstream.once('error', (error) => {
+        errors.push(`${host}: ${error?.message || 'connect failed'}`)
+        finish(false)
+      })
+
+      upstream.once('connect', () => {
+        try {
+          const proxyRequest = buildWebSocketProxyRequest(request, targetPath, host, Number(resolved.session.port))
+          upstream.write(proxyRequest)
+          if (head && head.length) {
+            upstream.write(head)
+          }
+
+          socket.pipe(upstream)
+          upstream.pipe(socket)
+
+          socket.on('error', () => {
+            if (!upstream.destroyed) upstream.destroy()
+          })
+
+          upstream.on('error', () => {
+            if (!socket.destroyed) socket.destroy()
+          })
+
+          socket.on('close', () => {
+            if (!upstream.destroyed) upstream.end()
+          })
+
+          upstream.on('close', () => {
+            if (!socket.destroyed) socket.end()
+          })
+
+          finish(true)
+        } catch (proxyError) {
+          errors.push(`${host}: ${proxyError?.message || 'upgrade proxy error'}`)
+          if (!upstream.destroyed) upstream.destroy()
+          finish(false)
+        }
+      })
+    })
+
+    if (forwarded) {
+      return true
+    }
+  }
+
+  writeUpgradeError(socket, 502, 'Bad Gateway', `Live dev websocket proxy failed: ${errors.join(' | ') || 'connect failed'}`)
+  return true
 }
 
 const buildLiveHtml = (htmlSource, sessionId, version = '') => {
@@ -7097,6 +7303,7 @@ app.post('/api/projects/:projectId/terminals/:terminalId/live-dev-session', auth
     terminalOwnerUserId,
     terminalId: normalizedTerminalId,
     protocol: parsedTarget.protocol,
+    hostname: parsedTarget.hostname,
     port: parsedTarget.port,
   })
 
@@ -7185,20 +7392,19 @@ app.get(/^\/live-dev\/([^/]+)(?:\/(.*))?$/, async (req, res) => {
   const queryIndex = String(req.originalUrl || '').indexOf('?')
   const query = queryIndex >= 0 ? String(req.originalUrl || '').slice(queryIndex) : ''
   const targetPath = suffix ? `/${suffix}${query}` : `/${query}`.replace(/\/$/, '/').replace(/^\/?\?/, '/?')
-  const upstreamUrl = `${resolved.session.protocol}//127.0.0.1:${resolved.session.port}${targetPath || '/'}`
 
   try {
-    const upstreamResponse = await fetch(upstreamUrl, {
-      method: 'GET',
-      headers: {
-        accept: String(req.headers.accept || '*/*'),
-        'accept-language': String(req.headers['accept-language'] || ''),
-        'cache-control': String(req.headers['cache-control'] || ''),
-        pragma: String(req.headers.pragma || ''),
-        'user-agent': String(req.headers['user-agent'] || ''),
-      },
-      signal: AbortSignal.timeout(15000),
+    const upstream = await fetchLiveDevUpstream({
+      session: resolved.session,
+      targetPath,
+      req,
     })
+
+    if (!upstream.ok) {
+      return res.status(502).send(`Live dev proxy failed: ${upstream.errorMessage || 'fetch failed'}`)
+    }
+
+    const upstreamResponse = upstream.upstreamResponse
 
     const contentType = String(upstreamResponse.headers.get('content-type') || '')
     res.status(upstreamResponse.status)
@@ -7216,6 +7422,10 @@ app.get(/^\/live-dev\/([^/]+)(?:\/(.*))?$/, async (req, res) => {
     const raw = Buffer.from(await upstreamResponse.arrayBuffer())
     return res.send(raw)
   } catch (proxyError) {
+    console.error('[live-dev] HTTP proxy failure', {
+      sessionId,
+      message: proxyError?.message || 'Unknown error',
+    })
     return res
       .status(502)
       .send(`Live dev proxy failed: ${proxyError.message || 'Unable to reach local dev server'}`)
@@ -9410,6 +9620,19 @@ const start = async () => {
     } else {
       console.log('Execution queue mode disabled (inline execution mode)')
     }
+
+    httpServer.on('upgrade', (request, socket, head) => {
+      void (async () => {
+        try {
+          const handled = await handleLiveDevWebSocketUpgrade(request, socket, head)
+          if (!handled) {
+            // Non live-dev upgrade requests are handled by other listeners (e.g. socket.io).
+          }
+        } catch (upgradeError) {
+          writeUpgradeError(socket, 502, 'Bad Gateway', `Live dev websocket proxy failed: ${upgradeError?.message || 'upgrade error'}`)
+        }
+      })()
+    })
 
     httpServer.on('error', (error) => {
       if (error?.code === 'EADDRINUSE') {
