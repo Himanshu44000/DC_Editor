@@ -3888,6 +3888,14 @@ const rewriteLiveDevResponseText = (text, sessionId, contentType = '', routePref
 
     result = result.replace(/(src|href)=(['"])\/(?!\/)/gi, `$1=$2${basePrefixWithSlash}`)
     result = result.replace(/url\((['"]?)\/(?!\/)/gi, `url($1${basePrefixWithSlash}`)
+
+    const liveDevClientShim = `\n<script>\n(() => {\n  const basePrefix = ${JSON.stringify(basePrefixWithSlash)};\n\n  const shouldSkipRewrite = (value) => {\n    const input = String(value || '').trim();\n    if (!input) return true;\n    if (input.startsWith(basePrefix)) return true;\n    if (/^(?:[a-z][a-z0-9+.-]*:|\\/\\/|#|data:|mailto:|tel:|javascript:)/i.test(input)) return true;\n    if (!input.startsWith('/')) return true;\n    if (input.startsWith('/api/') || input === '/api') return true;\n    if (input.startsWith('/socket.io/') || input === '/socket.io') return true;\n    return false;\n  };\n\n  const rewritePath = (value) => {\n    if (shouldSkipRewrite(value)) return value;\n    return basePrefix + String(value || '').replace(/^\\/+/, '');\n  };\n\n  const rewriteHistoryUrl = (urlValue) => {\n    if (typeof urlValue !== 'string') return urlValue;\n    return rewritePath(urlValue);\n  };\n\n  const nativePushState = history.pushState.bind(history);\n  const nativeReplaceState = history.replaceState.bind(history);\n  history.pushState = (state, title, urlValue) => nativePushState(state, title, rewriteHistoryUrl(urlValue));\n  history.replaceState = (state, title, urlValue) => nativeReplaceState(state, title, rewriteHistoryUrl(urlValue));\n\n  const rewriteElementAttribute = (element, attrName) => {\n    if (!element || !attrName) return;\n    const raw = element.getAttribute(attrName);\n    if (raw == null) return;\n    const rewritten = rewritePath(raw);\n    if (rewritten && rewritten !== raw) {\n      element.setAttribute(attrName, rewritten);\n    }\n  };\n\n  const rewriteNodeTree = (root) => {\n    if (!root || typeof root.querySelectorAll !== 'function') return;\n    const selectors = '[src],[href],[poster],[action]';\n    for (const node of root.querySelectorAll(selectors)) {\n      rewriteElementAttribute(node, 'src');\n      rewriteElementAttribute(node, 'href');\n      rewriteElementAttribute(node, 'poster');\n      rewriteElementAttribute(node, 'action');\n    }\n  };\n\n  document.addEventListener('click', (event) => {\n    const link = event.target && event.target.closest ? event.target.closest('a[href]') : null;\n    if (!link) return;\n    const href = link.getAttribute('href') || '';\n    const rewritten = rewritePath(href);\n    if (rewritten && rewritten !== href) {\n      link.setAttribute('href', rewritten);\n    }\n  }, true);\n\n  const observer = new MutationObserver((records) => {\n    for (const record of records) {\n      if (record.type === 'attributes') {\n        const element = record.target;\n        const attrName = record.attributeName || '';\n        rewriteElementAttribute(element, attrName);\n        continue;\n      }\n\n      for (const node of record.addedNodes || []) {\n        if (!node || node.nodeType !== 1) continue;\n        rewriteElementAttribute(node, 'src');\n        rewriteElementAttribute(node, 'href');\n        rewriteElementAttribute(node, 'poster');\n        rewriteElementAttribute(node, 'action');\n        rewriteNodeTree(node);\n      }\n    }\n  });\n\n  observer.observe(document.documentElement || document.body, {\n    subtree: true,\n    childList: true,\n    attributes: true,\n    attributeFilter: ['src', 'href', 'poster', 'action'],\n  });\n\n  if (document.readyState === 'loading') {\n    document.addEventListener('DOMContentLoaded', () => rewriteNodeTree(document), { once: true });\n  } else {\n    rewriteNodeTree(document);\n  }\n})();\n</script>\n`
+
+    if (/<\/head>/i.test(result)) {
+      result = result.replace(/<\/head>/i, `${liveDevClientShim}</head>`)
+    } else {
+      result = `${liveDevClientShim}${result}`
+    }
   }
 
   // Rewrite common dev-server absolute paths to stay under the proxy prefix.
@@ -3898,6 +3906,12 @@ const rewriteLiveDevResponseText = (text, sessionId, contentType = '', routePref
 
   // Ensure Vite HMR websocket carries live-dev session id for upgrade proxy routing.
   result = result.replace(/\?token=\$\{wsToken\}/g, `?token=\${wsToken}&dcsid=${String(sessionId || '')}`)
+
+  // Force Vite HMR websocket endpoint through the current live-dev route prefix.
+  result = result.replace(
+    /new WebSocket\(`\$\{socketProtocol\}:\/\/\$\{socketHost\}\?token=\$\{wsToken\}`,\s*"vite-hmr"\)/g,
+    `new WebSocket(\`${'${socketProtocol}'}://${'${location.host}'}${basePrefixWithSlash}?token=${'${wsToken}'}&dcsid=${String(sessionId || '')}\`, "vite-hmr")`,
+  )
 
   return result
 }
@@ -3995,6 +4009,26 @@ const writeUpgradeError = (socket, statusCode, statusText, message = '') => {
   socket.destroy()
 }
 
+const stripLiveDevProxyPrefix = (pathname = '', sessionId = '') => {
+  const normalizedPath = String(pathname || '').trim() || '/'
+  const sid = String(sessionId || '').trim()
+  if (!sid) return normalizedPath
+
+  const prefixes = [`/api/live-dev/${sid}`, `/live-dev/${sid}`]
+  for (const prefix of prefixes) {
+    if (normalizedPath === prefix || normalizedPath === `${prefix}/`) {
+      return '/'
+    }
+
+    if (normalizedPath.startsWith(`${prefix}/`)) {
+      const remainder = normalizedPath.slice(prefix.length)
+      return remainder.startsWith('/') ? remainder : `/${remainder}`
+    }
+  }
+
+  return normalizedPath
+}
+
 const buildLiveDevResponsePath = ({ sessionId, requestedPath = '/', routePrefix = '/api/live-dev' }) => {
   const normalizedPrefix = String(routePrefix || '/api/live-dev').startsWith('/')
     ? String(routePrefix || '/api/live-dev')
@@ -4009,6 +4043,9 @@ const serveLiveDevPath = async (req, res, { sessionId, suffix = '', routePrefix 
   if (!resolved) {
     return res.status(404).send('Live dev session not found or expired')
   }
+
+  res.setHeader('X-DC-Live-Dev-Proxy', '1')
+  res.setHeader('X-DC-Live-Dev-Session', String(sessionId || ''))
 
   const queryIndex = String(req.originalUrl || '').indexOf('?')
   const query = queryIndex >= 0 ? String(req.originalUrl || '').slice(queryIndex) : ''
@@ -4075,7 +4112,8 @@ const handleLiveDevWebSocketUpgrade = async (request, socket, head) => {
   }
 
   parsed.searchParams.delete('dcsid')
-  const targetPath = `${parsed.pathname || '/'}${parsed.search || ''}` || '/'
+  const upstreamPathname = stripLiveDevProxyPrefix(parsed.pathname || '/', sessionId)
+  const targetPath = `${upstreamPathname || '/'}${parsed.search || ''}` || '/'
   const hostCandidates = buildLoopbackHostCandidates(resolved.session.hostname)
   const errors = []
 

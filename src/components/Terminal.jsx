@@ -220,7 +220,23 @@ const Terminal = ({ projectId, projectName, token, userId, ownerId, sharedTermin
         ? `${API_ORIGIN}${preferredPath.startsWith('/') ? preferredPath : `/${preferredPath}`}`
         : String(payload.url || '').trim()
 
-      previewTab.location.href = preferredUrl || String(payload.url || '')
+      let normalizedUrl = preferredUrl || String(payload.url || '')
+      if (!preferredPath) {
+        try {
+          const fallbackParsed = new URL(String(payload.url || ''), window.location.origin)
+          const match = String(fallbackParsed.pathname || '').match(/^\/(?:api\/)?live-dev\/([^/]+)(?:\/(.*))?$/i)
+          if (match) {
+            const sessionId = String(match[1] || '').trim()
+            const suffix = String(match[2] || '').trim()
+            const normalizedSuffix = suffix ? `/${suffix}` : '/'
+            normalizedUrl = `${API_ORIGIN}/api/live-dev/${sessionId}${normalizedSuffix}${fallbackParsed.search || ''}`
+          }
+        } catch {
+          // Keep original URL fallback.
+        }
+      }
+
+      previewTab.location.href = normalizedUrl
       previewTab.focus()
     } catch (previewError) {
       try {
