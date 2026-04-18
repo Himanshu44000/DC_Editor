@@ -16,6 +16,7 @@ const AuthPage = () => {
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [passwordErrors, setPasswordErrors] = useState([])
+  const [showPassword, setShowPassword] = useState(false)
 
   if (loading) {
     return (
@@ -126,6 +127,7 @@ const AuthPage = () => {
                 setMode('login')
                 setError('')
                 setPasswordErrors([])
+                setShowPassword(false)
               }}
             >
               Login
@@ -137,6 +139,7 @@ const AuthPage = () => {
                 setMode('register')
                 setError('')
                 setPasswordErrors([])
+                setShowPassword(false)
               }}
             >
               Register
@@ -208,23 +211,67 @@ const AuthPage = () => {
               <label style={{ display: 'block', marginBottom: '8px', color: '#cbd5e1', fontSize: '14px' }}>
                 Password
               </label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                placeholder="••••••••"
-                style={{
-                  width: '100%',
-                  padding: '10px',
-                  background: '#0b1324',
-                  border: '1px solid #334155',
-                  borderRadius: '8px',
-                  color: '#e2e8f0',
-                  fontSize: '14px',
-                  boxSizing: 'border-box',
-                }}
-              />
+              <div style={{ position: 'relative' }}>
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  placeholder="••••••••"
+                  style={{
+                    width: '100%',
+                    padding: '10px 42px 10px 10px',
+                    background: '#0b1324',
+                    border: '1px solid #334155',
+                    borderRadius: '8px',
+                    color: '#e2e8f0',
+                    fontSize: '14px',
+                    boxSizing: 'border-box',
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((prev) => !prev)}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  title={showPassword ? 'Hide password' : 'Show password'}
+                  style={{
+                    position: 'absolute',
+                    right: '10px',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    width: '22px',
+                    height: '22px',
+                    border: 'none',
+                    background: 'transparent',
+                    color: '#93c5fd',
+                    cursor: 'pointer',
+                    padding: 0,
+                  }}
+                >
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true">
+                    <path
+                      d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                    <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.8" />
+                    {showPassword && (
+                      <path
+                        d="M4 20 20 4"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    )}
+                  </svg>
+                </button>
+              </div>
               {mode === 'register' && passwordErrors.length > 0 && (
                 <div style={{ marginTop: '8px', color: '#fca5a5', fontSize: '12px' }}>
                   {passwordErrors.map((err, idx) => (

@@ -3550,6 +3550,69 @@ const persistUser = async (user) => {
   )
 }
 
+const mapDbUserRowToAppUser = (row = {}) => ({
+  id: row.id,
+  email: String(row.email || '').toLowerCase(),
+  name: row.name,
+  avatarUrl: row.avatar_url || '',
+  bio: row.bio || '',
+  pronouns: row.pronouns || '',
+  company: row.company || '',
+  location: row.location || '',
+  jobTitle: row.job_title || '',
+  websiteUrl: row.website_url || '',
+  githubProfile: row.github_profile || '',
+  linkedinUrl: row.linkedin_url || '',
+  portfolioUrl: row.portfolio_url || '',
+  skills: row.skills || '',
+  githubUsername: row.github_username || '',
+  githubAccessToken: row.github_access_token || '',
+  githubTokenScope: row.github_token_scope || '',
+  githubConnectedAt: row.github_connected_at || null,
+  passwordHash: String(row.password_hash || ''),
+})
+
+const removeUserFromMemoryByEmail = (email = '') => {
+  const normalizedEmail = String(email || '').trim().toLowerCase()
+  if (!normalizedEmail) return
+
+  const existingUserId = usersByEmail.get(normalizedEmail)
+  if (existingUserId) {
+    usersByEmail.delete(normalizedEmail)
+    const existingUser = users.get(existingUserId)
+    if (existingUser && String(existingUser.email || '').toLowerCase() === normalizedEmail) {
+      users.delete(existingUserId)
+    }
+  }
+}
+
+const syncUserFromDbByEmail = async (email = '') => {
+  if (!dbClient) return null
+
+  const normalizedEmail = String(email || '').trim().toLowerCase()
+  if (!normalizedEmail) return null
+
+  const result = await dbClient.query(
+    `SELECT id, email, name, avatar_url, bio, pronouns, company, location,
+            job_title, website_url, github_profile, linkedin_url, portfolio_url, skills,
+            github_username, github_access_token, github_token_scope, github_connected_at, password_hash
+       FROM collab_users
+      WHERE LOWER(email) = LOWER($1)
+      LIMIT 1`,
+    [normalizedEmail],
+  )
+
+  if (!result.rows.length) {
+    removeUserFromMemoryByEmail(normalizedEmail)
+    return null
+  }
+
+  const user = mapDbUserRowToAppUser(result.rows[0])
+  users.set(user.id, user)
+  usersByEmail.set(user.email, user.id)
+  return user
+}
+
 const mapAppRoleToDbRole = (role, isOwner = false) => {
   if (isOwner) return 'admin'
   if (role === 'viewer') return 'viewer'
@@ -4286,31 +4349,11 @@ const initDb = async () => {
   const usersResult = await dbClient.query(
     `SELECT id, email, name, avatar_url, bio, pronouns, company, location,
             job_title, website_url, github_profile, linkedin_url, portfolio_url, skills,
-            github_username, github_access_token, github_token_scope, github_connected_at
+            github_username, github_access_token, github_token_scope, github_connected_at, password_hash
        FROM collab_users`,
   )
   for (const row of usersResult.rows) {
-    const user = {
-      id: row.id,
-      email: row.email,
-      name: row.name,
-      avatarUrl: row.avatar_url || '',
-      bio: row.bio || '',
-      pronouns: row.pronouns || '',
-      company: row.company || '',
-      location: row.location || '',
-      jobTitle: row.job_title || '',
-      websiteUrl: row.website_url || '',
-      githubProfile: row.github_profile || '',
-      linkedinUrl: row.linkedin_url || '',
-      portfolioUrl: row.portfolio_url || '',
-      skills: row.skills || '',
-      githubUsername: row.github_username || '',
-      githubAccessToken: row.github_access_token || '',
-      githubTokenScope: row.github_token_scope || '',
-      githubConnectedAt: row.github_connected_at || null,
-      passwordHash: '__clerk__',
-    }
+    const user = mapDbUserRowToAppUser(row)
     users.set(user.id, user)
     usersByEmail.set(user.email, user.id)
   }
@@ -5943,13 +5986,14 @@ app.get('/api/templates', (req, res) => {
 app.post('/api/auth/signup', async (req, res) => {
   try {
     const { email, password, name } = req.body
+    const normalizedEmail = String(email || '').trim().toLowerCase()
 
     // Validation
-    if (!email || !password) {
+    if (!normalizedEmail || !password) {
       return res.status(400).json({ message: 'Email and password are required' })
     }
 
-    if (!validateEmail(email)) {
+    if (!validateEmail(normalizedEmail)) {
       return res.status(400).json({ message: 'Invalid email format' })
     }
 
@@ -5958,8 +6002,14 @@ app.post('/api/auth/signup', async (req, res) => {
       return res.status(400).json({ message: 'Password is too weak', errors })
     }
 
-    // Check if user already exists
-    if (usersByEmail.has(email.toLowerCase())) {
+    // Keep DB as source of truth for deployed mode to avoid stale in-memory checks.
+    const dbUser = await syncUserFromDbByEmail(normalizedEmail)
+    if (dbUser) {
+      return res.status(409).json({ message: 'Email already registered' })
+    }
+
+    // Check if user already exists in local mode.
+    if (!dbClient && usersByEmail.has(normalizedEmail)) {
       return res.status(409).json({ message: 'Email already registered' })
     }
 
@@ -5970,8 +6020,8 @@ app.post('/api/auth/signup', async (req, res) => {
     // Create user
     const user = {
       id: userId,
-      email: email.toLowerCase(),
-      name: name ? String(name).trim() : String(email).split('@')[0],
+      email: normalizedEmail,
+      name: name ? String(name).trim() : String(normalizedEmail).split('@')[0],
       avatarUrl: '',
       bio: '',
       pronouns: '',
@@ -5992,9 +6042,17 @@ app.post('/api/auth/signup', async (req, res) => {
       updated_at: new Date(),
     }
 
-    users.set(user.id, user)
-    usersByEmail.set(user.email, user.id)
+    if (!dbClient) {
+      users.set(user.id, user)
+      usersByEmail.set(user.email, user.id)
+    }
+
     await persistUser(user)
+
+    if (dbClient) {
+      users.set(user.id, user)
+      usersByEmail.set(user.email, user.id)
+    }
 
     // Generate tokens
     const accessToken = generateAccessToken(user.id, user.email)
@@ -6023,17 +6081,19 @@ app.post('/api/auth/signup', async (req, res) => {
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body
+    const normalizedEmail = String(email || '').trim().toLowerCase()
 
-    if (!email || !password) {
+    if (!normalizedEmail || !password) {
       return res.status(400).json({ message: 'Email and password are required' })
     }
 
-    const userId = usersByEmail.get(email.toLowerCase())
-    if (!userId) {
-      return res.status(401).json({ message: 'Invalid email or password' })
-    }
+    const user = dbClient
+      ? await syncUserFromDbByEmail(normalizedEmail)
+      : (() => {
+          const userId = usersByEmail.get(normalizedEmail)
+          return userId ? users.get(userId) : null
+        })()
 
-    const user = users.get(userId)
     if (!user) {
       return res.status(401).json({ message: 'Invalid email or password' })
     }
