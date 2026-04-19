@@ -9240,6 +9240,8 @@ io.on('connection', (socket) => {
       // Pull generated files from previous commands before pushing current project state,
       // so artifacts like package-lock.json are not missed due timing/race conditions.
       syncProjectFilesFromWorkspace(project, workspaceDir)
+      persistProject(project).catch(() => {})
+      broadcastProjectSnapshot(projectId, project).catch(() => {})
       syncProjectFilesToWorkspace(project, workspaceDir)
     } catch (syncError) {
       socket.emit('terminal:error', {
