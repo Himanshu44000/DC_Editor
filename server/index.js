@@ -2967,6 +2967,27 @@ const isPathInsideWorkspace = (workspaceDir, candidatePath) => {
   return candidate === root || candidate.startsWith(`${root}${path.sep}`)
 }
 
+const ensureTerminalSessionWorkspace = (session, workspaceDir) => {
+  if (!session) return
+
+  const normalizedWorkspaceDir = path.resolve(String(workspaceDir || ''))
+  session.workspaceDir = normalizedWorkspaceDir
+
+  const currentCwd = String(session.cwd || '').trim()
+  if (!currentCwd || !isPathInsideWorkspace(normalizedWorkspaceDir, currentCwd)) {
+    session.cwd = normalizedWorkspaceDir
+    return
+  }
+
+  try {
+    if (!fs.existsSync(currentCwd) || !fs.statSync(currentCwd).isDirectory()) {
+      session.cwd = normalizedWorkspaceDir
+    }
+  } catch {
+    session.cwd = normalizedWorkspaceDir
+  }
+}
+
 const syncProjectFilesFromWorkspace = (project, workspaceDir) => {
   if (!fs.existsSync(workspaceDir)) return
   
@@ -9268,6 +9289,8 @@ io.on('connection', (socket) => {
         child: null,
       }
 
+    ensureTerminalSessionWorkspace(session, workspaceDir)
+
     if (!session.shellProfile) {
       session.shellProfile = requestedShellProfile || 'default'
     }
@@ -9497,13 +9520,19 @@ io.on('connection', (socket) => {
 
     const terminals = Array.from(terminalSessions.values())
       .filter((session) => session.projectId === projectId && session.ownerUserId === ownerUserId)
-      .map((session) => ({
-        terminalId: session.terminalId,
-        cwd: session.cwd,
-        cwdDisplay: getTerminalCwdDisplay(session.workspaceDir, session.cwd),
-        shellProfile: normalizeShellProfile(session.shellProfile),
-        isRunning: Boolean(session.child && !session.child.killed),
-      }))
+      .map((session) => {
+        const workspaceDir = getProjectTerminalWorkspace(projectId, ownerUserId)
+        ensureTerminalSessionWorkspace(session, workspaceDir)
+        terminalSessions.set(terminalSessionKey(ownerUserId, projectId, session.terminalId), session)
+
+        return {
+          terminalId: session.terminalId,
+          cwd: session.cwd,
+          cwdDisplay: getTerminalCwdDisplay(session.workspaceDir, session.cwd),
+          shellProfile: normalizeShellProfile(session.shellProfile),
+          isRunning: Boolean(session.child && !session.child.killed),
+        }
+      })
 
     socket.emit('terminal:restored', {
       projectId,
