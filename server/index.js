@@ -3318,7 +3318,7 @@ const getShellForCommand = (commandText, shellProfile = 'default') => {
       if (gitBash) {
         return {
           command: gitBash,
-          args: ['-lc', commandText],
+          args: ['-c', commandText],
         }
       }
     }
@@ -3332,20 +3332,20 @@ const getShellForCommand = (commandText, shellProfile = 'default') => {
   if (normalizedProfile === 'zsh') {
     return {
       command: '/bin/zsh',
-      args: ['-lc', commandText],
+      args: ['-c', commandText],
     }
   }
 
   if (normalizedProfile === 'sh') {
     return {
       command: '/bin/sh',
-      args: ['-lc', commandText],
+      args: ['-c', commandText],
     }
   }
 
   return {
     command: '/bin/bash',
-    args: ['-lc', commandText],
+    args: ['-c', commandText],
   }
 }
 
