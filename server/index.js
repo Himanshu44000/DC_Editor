@@ -185,7 +185,7 @@ const LIVE_DEV_SESSION_TTL_MS = 1000 * 60 * 30
 const LIVE_DEV_UPSTREAM_TIMEOUT_MS = Math.max(15000, Number(process.env.LIVE_DEV_UPSTREAM_TIMEOUT_MS || 45000))
 const LIVE_DEV_UPSTREAM_BOOT_TIMEOUT_MS = Math.max(
   LIVE_DEV_UPSTREAM_TIMEOUT_MS,
-  Number(process.env.LIVE_DEV_UPSTREAM_BOOT_TIMEOUT_MS || 120000),
+  Number(process.env.LIVE_DEV_UPSTREAM_BOOT_TIMEOUT_MS || 180000),
 )
 let dbClient = null
 
@@ -3879,7 +3879,17 @@ const getLocalInterfaceHostSet = () => {
         const isIPv6 = family === 'ipv6' || family === '6'
 
         if (!isIPv4 && !isIPv6) continue
-        hosts.add(address)
+
+        if (isIPv6) {
+          if (address === '::1') {
+            hosts.add(address)
+          }
+          continue
+        }
+
+        if (address === '127.0.0.1' || isPrivateIpv4Host(address)) {
+          hosts.add(address)
+        }
       }
     }
   } catch {
@@ -3893,6 +3903,10 @@ const isAllowedLiveDevHost = (value = '') => {
   const normalized = normalizeLoopbackHost(value)
   if (!normalized) return false
   if (normalized === 'localhost' || normalized === '127.0.0.1' || normalized === '::1') return true
+
+  if (normalized.includes(':')) {
+    return false
+  }
 
   const localHosts = getLocalInterfaceHostSet()
   if (localHosts.has(normalized)) return true
@@ -4048,8 +4062,6 @@ const isLiveDevTextResponse = (contentType = '') => {
   )
 }
 
-const sleep = (delayMs = 0) => new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(delayMs) || 0)))
-
 const fetchLiveDevUpstream = async ({ session, targetPath, req }) => {
   const normalizedPath = (() => {
     const value = String(targetPath || '').trim()
@@ -4060,14 +4072,12 @@ const fetchLiveDevUpstream = async ({ session, targetPath, req }) => {
   const acceptHeader = String(req?.headers?.accept || '').toLowerCase()
   const isBootstrapRequest =
     normalizedPath === '/' || normalizedPath === '/index.html' || acceptHeader.includes('text/html')
-  const timeoutMs = isBootstrapRequest ? LIVE_DEV_UPSTREAM_BOOT_TIMEOUT_MS : LIVE_DEV_UPSTREAM_TIMEOUT_MS
   const perAttemptTimeoutMs = isBootstrapRequest
-    ? Math.max(4000, Math.min(15000, LIVE_DEV_UPSTREAM_TIMEOUT_MS))
+    ? Math.max(30000, Math.min(60000, LIVE_DEV_UPSTREAM_BOOT_TIMEOUT_MS))
     : LIVE_DEV_UPSTREAM_TIMEOUT_MS
-  const bootRetryDelayMs = Math.max(600, Number(process.env.LIVE_DEV_BOOT_RETRY_DELAY_MS || 1200))
-  const retryDeadline = Date.now() + timeoutMs
 
   const hostCandidates = buildLoopbackHostCandidates(session?.hostname)
+  const candidateHosts = isBootstrapRequest ? hostCandidates.slice(0, 3) : hostCandidates
   const errors = []
   const pushError = (message) => {
     errors.push(String(message || 'fetch failed'))
@@ -4076,53 +4086,26 @@ const fetchLiveDevUpstream = async ({ session, targetPath, req }) => {
     }
   }
 
-  let round = 0
+  for (const host of candidateHosts) {
+    const upstreamUrl = `${session.protocol}//${formatHostForUrl(host)}:${session.port}${normalizedPath}`
 
-  while (true) {
-    round += 1
+    try {
+      const upstreamResponse = await fetch(upstreamUrl, {
+        method: 'GET',
+        headers: {
+          accept: String(req.headers.accept || '*/*'),
+          'accept-language': String(req.headers['accept-language'] || ''),
+          'cache-control': String(req.headers['cache-control'] || ''),
+          pragma: String(req.headers.pragma || ''),
+          'user-agent': String(req.headers['user-agent'] || ''),
+        },
+        signal: AbortSignal.timeout(perAttemptTimeoutMs),
+      })
 
-    for (const host of hostCandidates) {
-      const upstreamUrl = `${session.protocol}//${formatHostForUrl(host)}:${session.port}${normalizedPath}`
-      const remainingMs = retryDeadline - Date.now()
-      if (remainingMs <= 0) {
-        break
-      }
-
-      const effectiveTimeoutMs = Math.max(2000, Math.min(perAttemptTimeoutMs, remainingMs))
-
-      try {
-        const upstreamResponse = await fetch(upstreamUrl, {
-          method: 'GET',
-          headers: {
-            accept: String(req.headers.accept || '*/*'),
-            'accept-language': String(req.headers['accept-language'] || ''),
-            'cache-control': String(req.headers['cache-control'] || ''),
-            pragma: String(req.headers.pragma || ''),
-            'user-agent': String(req.headers['user-agent'] || ''),
-          },
-          signal: AbortSignal.timeout(effectiveTimeoutMs),
-        })
-
-        return { ok: true, upstreamResponse, upstreamUrl, upstreamHost: host }
-      } catch (error) {
-        pushError(`${host}#${round}: ${error?.message || 'fetch failed'}`)
-      }
+      return { ok: true, upstreamResponse, upstreamUrl, upstreamHost: host }
+    } catch (error) {
+      pushError(`${host}#1: ${error?.message || 'fetch failed'}`)
     }
-
-    if (!isBootstrapRequest) {
-      break
-    }
-
-    if (Date.now() >= retryDeadline) {
-      break
-    }
-
-    const remainingDelayBudgetMs = retryDeadline - Date.now()
-    if (remainingDelayBudgetMs <= 0) {
-      break
-    }
-
-    await sleep(Math.min(bootRetryDelayMs, remainingDelayBudgetMs))
   }
 
   return {
