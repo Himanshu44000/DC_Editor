@@ -172,6 +172,7 @@ const terminalSessions = new Map()
 const terminalDisconnectStopTimers = new Map()
 const livePreviewSessions = new Map()
 const liveDevSessions = new Map()
+const liveDevBootstrapRequests = new Map()
 const executionJobs = new Map()
 const pendingProjectPersistTimers = new Map()
 const pendingWorkspaceFileSyncTimers = new Map()
@@ -3938,6 +3939,26 @@ const buildLoopbackHostCandidates = (preferredHost = '') => {
   return candidates
 }
 
+const buildBootstrapHostCandidates = (preferredHost = '') => {
+  const candidates = []
+
+  const pushHost = (value) => {
+    const normalized = normalizeLoopbackHost(value)
+    if (!normalized) return
+    if (!isAllowedLiveDevHost(normalized)) return
+    if (!candidates.includes(normalized)) {
+      candidates.push(normalized)
+    }
+  }
+
+  pushHost(preferredHost)
+  pushHost('localhost')
+  pushHost('127.0.0.1')
+  pushHost('::1')
+
+  return candidates
+}
+
 const formatHostForUrl = (host = '') => {
   const normalized = normalizeLoopbackHost(host)
   if (!normalized) return 'localhost'
@@ -4073,11 +4094,14 @@ const fetchLiveDevUpstream = async ({ session, targetPath, req }) => {
   const isBootstrapRequest =
     normalizedPath === '/' || normalizedPath === '/index.html' || acceptHeader.includes('text/html')
   const perAttemptTimeoutMs = isBootstrapRequest
-    ? Math.max(8000, Math.min(15000, LIVE_DEV_UPSTREAM_TIMEOUT_MS))
+    ? Math.max(20000, Math.min(45000, LIVE_DEV_UPSTREAM_BOOT_TIMEOUT_MS))
     : LIVE_DEV_UPSTREAM_TIMEOUT_MS
+  const totalTimeoutBudgetMs = isBootstrapRequest ? LIVE_DEV_UPSTREAM_BOOT_TIMEOUT_MS : Number.POSITIVE_INFINITY
 
-  const hostCandidates = buildLoopbackHostCandidates(session?.hostname)
-  const candidateHosts = isBootstrapRequest ? hostCandidates.slice(0, 6) : hostCandidates
+  const candidateHosts = isBootstrapRequest
+    ? buildBootstrapHostCandidates(session?.hostname)
+    : buildLoopbackHostCandidates(session?.hostname)
+  const startedAtMs = Date.now()
   const errors = []
   const pushError = (message) => {
     errors.push(String(message || 'fetch failed'))
@@ -4087,6 +4111,17 @@ const fetchLiveDevUpstream = async ({ session, targetPath, req }) => {
   }
 
   for (const host of candidateHosts) {
+    const elapsedMs = Date.now() - startedAtMs
+    const remainingBudgetMs = totalTimeoutBudgetMs - elapsedMs
+    if (isBootstrapRequest && remainingBudgetMs <= 1000) {
+      pushError('bootstrap timeout budget exceeded')
+      break
+    }
+
+    const requestTimeoutMs = isBootstrapRequest
+      ? Math.max(5000, Math.min(perAttemptTimeoutMs, remainingBudgetMs))
+      : perAttemptTimeoutMs
+
     const upstreamUrl = `${session.protocol}//${formatHostForUrl(host)}:${session.port}${normalizedPath}`
 
     try {
@@ -4099,7 +4134,7 @@ const fetchLiveDevUpstream = async ({ session, targetPath, req }) => {
           pragma: String(req.headers.pragma || ''),
           'user-agent': String(req.headers['user-agent'] || ''),
         },
-        signal: AbortSignal.timeout(perAttemptTimeoutMs),
+        signal: AbortSignal.timeout(requestTimeoutMs),
       })
 
       return { ok: true, upstreamResponse, upstreamUrl, upstreamHost: host }
@@ -4113,6 +4148,27 @@ const fetchLiveDevUpstream = async ({ session, targetPath, req }) => {
     isBootstrapRequest,
     errorMessage: errors.join(' | ') || 'fetch failed',
   }
+}
+
+const fetchLiveDevUpstreamWithBootstrapLock = async ({ sessionId, session, targetPath, req, isBootstrapPath }) => {
+  if (!isBootstrapPath) {
+    return fetchLiveDevUpstream({ session, targetPath, req })
+  }
+
+  const key = String(sessionId || '')
+  const existing = liveDevBootstrapRequests.get(key)
+  if (existing) {
+    return existing
+  }
+
+  const pending = fetchLiveDevUpstream({ session, targetPath, req }).finally(() => {
+    if (liveDevBootstrapRequests.get(key) === pending) {
+      liveDevBootstrapRequests.delete(key)
+    }
+  })
+
+  liveDevBootstrapRequests.set(key, pending)
+  return pending
 }
 
 const buildLiveDevWarmupHtml = ({ sessionId, routePrefix = '/api/live-dev', message = '' }) => {
@@ -4160,7 +4216,7 @@ const buildLiveDevWarmupHtml = ({ sessionId, routePrefix = '/api/live-dev', mess
             })
             .then((html) => {
               if (/Preparing live preview/i.test(html)) {
-                setTimeout(tick, 1500);
+                setTimeout(tick, 3000);
                 return;
               }
               document.open();
@@ -4168,7 +4224,7 @@ const buildLiveDevWarmupHtml = ({ sessionId, routePrefix = '/api/live-dev', mess
               document.close();
             })
             .catch(() => {
-              setTimeout(tick, 2000);
+              setTimeout(tick, 4000);
             });
         };
         setTimeout(tick, 1200);
@@ -4268,18 +4324,21 @@ const serveLiveDevPath = async (req, res, { sessionId, suffix = '', routePrefix 
   const query = queryIndex >= 0 ? String(req.originalUrl || '').slice(queryIndex) : ''
   const trimmedSuffix = String(suffix || '').trim()
   const targetPath = trimmedSuffix ? `/${trimmedSuffix}${query}` : `/${query}`.replace(/\/$/, '/').replace(/^\/?\?/, '/?')
+  const normalizedTargetNoQuery = String(targetPath || '/').split('?')[0] || '/'
+  const isBootstrapPath =
+    !trimmedSuffix || trimmedSuffix === 'index.html' || normalizedTargetNoQuery === '/' || normalizedTargetNoQuery === '/index.html'
 
   try {
-    const upstream = await fetchLiveDevUpstream({
+    const upstream = await fetchLiveDevUpstreamWithBootstrapLock({
+      sessionId,
       session: resolved.session,
       targetPath,
       req,
+      isBootstrapPath,
     })
 
     if (!upstream.ok) {
-      const isBootstrapPath = !trimmedSuffix || trimmedSuffix === 'index.html'
-      const timeoutLike = /timed out|timeout|aborted/i.test(String(upstream.errorMessage || ''))
-      if (isBootstrapPath && timeoutLike) {
+      if (isBootstrapPath) {
         res.status(200)
         res.setHeader('Content-Type', 'text/html; charset=utf-8')
         return res.send(
@@ -9570,10 +9629,52 @@ io.on('connection', (socket) => {
       /^(npx\s+)?next\s+dev(\s|$)/i.test(trimmedCommand) ||
       /^vite(\s|$)/i.test(trimmedCommand)
 
+    const isPackageManagerDevCommand = /^(npm|pnpm|yarn)\s+(run\s+)?dev(\s|$)/i.test(trimmedCommand)
+    const isDirectNextDevCommand = /^(npx\s+)?next\s+dev(\s|$)/i.test(trimmedCommand)
+    let workspaceDevScript = ''
+    if (isPackageManagerDevCommand) {
+      try {
+        const packageJsonPath = path.join(session.cwd, 'package.json')
+        if (fs.existsSync(packageJsonPath)) {
+          const parsedPackage = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'))
+          workspaceDevScript = String(parsedPackage?.scripts?.dev || '')
+        }
+      } catch {
+        workspaceDevScript = ''
+      }
+    }
+
+    const isNextDevCommand = isDirectNextDevCommand || /\bnext\s+dev\b/i.test(workspaceDevScript)
+
+    if (isNextDevCommand) {
+      const conflictingNextSession = Array.from(terminalSessions.values()).find((candidate) => {
+        if (!candidate || candidate === session) return false
+        if (String(candidate.projectId || '') !== String(projectId || '')) return false
+        if (String(candidate.ownerUserId || '') !== String(terminalOwnerUserId || '')) return false
+        if (!candidate.child || candidate.child.killed) return false
+        return String(candidate.activeDevServerKind || '') === 'next'
+      })
+
+      if (conflictingNextSession) {
+        socket.emit('terminal:error', {
+          projectId,
+          terminalId: normalizedTerminalId,
+          message: `Next dev server is already running in ${String(conflictingNextSession.terminalId || 'another terminal')}. Stop it before starting another one to avoid memory crashes.`,
+        })
+        return
+      }
+    }
+
     if (isDevServerCommand) {
       // Keep framework dev servers on a standard env value (Next.js warns on custom NODE_ENV).
       childEnv.NODE_ENV = 'development'
       childEnv.BABEL_ENV = 'development'
+    }
+
+    if (isNextDevCommand) {
+      // Turbopack can spike memory in constrained hosted environments.
+      childEnv.NEXT_DISABLE_TURBOPACK = '1'
+      childEnv.NEXT_TELEMETRY_DISABLED = '1'
     }
 
     delete childEnv.PORT
@@ -9587,6 +9688,8 @@ io.on('connection', (socket) => {
 
     session.workspaceDir = workspaceDir
     session.child = child
+  session.activeCommand = trimmedCommand
+  session.activeDevServerKind = isNextDevCommand ? 'next' : isDevServerCommand ? 'other' : ''
     terminalSessions.set(sessionKey, session)
 
     emitTerminalEvent(project, session, 'terminal:started', {
@@ -9627,7 +9730,11 @@ io.on('connection', (socket) => {
 
     child.on('error', (childError) => {
       const active = terminalSessions.get(sessionKey)
-      if (active?.child === child) active.child = null
+      if (active?.child === child) {
+        active.child = null
+        active.activeCommand = ''
+        active.activeDevServerKind = ''
+      }
       emitTerminalEvent(project, session, 'terminal:error', {
         projectId,
         terminalId: normalizedTerminalId,
@@ -9637,7 +9744,11 @@ io.on('connection', (socket) => {
 
     child.on('close', (code, signal) => {
       const active = terminalSessions.get(sessionKey)
-      if (active?.child === child) active.child = null
+      if (active?.child === child) {
+        active.child = null
+        active.activeCommand = ''
+        active.activeDevServerKind = ''
+      }
       try {
         syncProjectFilesFromWorkspace(project, session.workspaceDir)
         persistProject(project).catch(() => {})
