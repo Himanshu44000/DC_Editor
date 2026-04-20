@@ -182,7 +182,11 @@ const TERMINAL_WORKSPACE_EPHEMERAL = String(process.env.TERMINAL_WORKSPACE_EPHEM
 const LOCAL_STATE_PATH = path.join(process.cwd(), '.collab-state.json')
 const LIVE_PREVIEW_SESSION_TTL_MS = 1000 * 60 * 60 * 6
 const LIVE_DEV_SESSION_TTL_MS = 1000 * 60 * 30
-const LIVE_DEV_UPSTREAM_TIMEOUT_MS = 15000
+const LIVE_DEV_UPSTREAM_TIMEOUT_MS = Math.max(15000, Number(process.env.LIVE_DEV_UPSTREAM_TIMEOUT_MS || 45000))
+const LIVE_DEV_UPSTREAM_BOOT_TIMEOUT_MS = Math.max(
+  LIVE_DEV_UPSTREAM_TIMEOUT_MS,
+  Number(process.env.LIVE_DEV_UPSTREAM_BOOT_TIMEOUT_MS || 120000),
+)
 let dbClient = null
 
 const scheduleProjectPersist = (projectId, delayMs = PROJECT_PERSIST_DEBOUNCE_MS) => {
@@ -2988,6 +2992,29 @@ const ensureTerminalSessionWorkspace = (session, workspaceDir) => {
   }
 }
 
+const validateTerminalSessionWorkspace = (session, workspaceDir) => {
+  if (!session) {
+    return {
+      ok: false,
+      message: 'Terminal session missing. Please open a new terminal tab.',
+    }
+  }
+
+  ensureTerminalSessionWorkspace(session, workspaceDir)
+
+  const normalizedWorkspaceDir = path.resolve(String(workspaceDir || ''))
+  const normalizedCwd = path.resolve(String(session.cwd || normalizedWorkspaceDir))
+
+  if (!isPathInsideWorkspace(normalizedWorkspaceDir, normalizedCwd)) {
+    return {
+      ok: false,
+      message: 'Terminal workspace mismatch detected. Please reopen the terminal.',
+    }
+  }
+
+  return { ok: true }
+}
+
 const syncProjectFilesFromWorkspace = (project, workspaceDir) => {
   if (!fs.existsSync(workspaceDir)) return
   
@@ -3968,28 +3995,41 @@ const fetchLiveDevUpstream = async ({ session, targetPath, req }) => {
     return value.startsWith('/') ? value : `/${value}`
   })()
 
+  const acceptHeader = String(req?.headers?.accept || '').toLowerCase()
+  const isBootstrapRequest =
+    normalizedPath === '/' || normalizedPath === '/index.html' || acceptHeader.includes('text/html')
+  const timeoutMs = isBootstrapRequest ? LIVE_DEV_UPSTREAM_BOOT_TIMEOUT_MS : LIVE_DEV_UPSTREAM_TIMEOUT_MS
+  const maxAttemptsPerHost = isBootstrapRequest ? 2 : 1
+
   const hostCandidates = buildLoopbackHostCandidates(session?.hostname)
   const errors = []
 
   for (const host of hostCandidates) {
     const upstreamUrl = `${session.protocol}//${formatHostForUrl(host)}:${session.port}${normalizedPath}`
 
-    try {
-      const upstreamResponse = await fetch(upstreamUrl, {
-        method: 'GET',
-        headers: {
-          accept: String(req.headers.accept || '*/*'),
-          'accept-language': String(req.headers['accept-language'] || ''),
-          'cache-control': String(req.headers['cache-control'] || ''),
-          pragma: String(req.headers.pragma || ''),
-          'user-agent': String(req.headers['user-agent'] || ''),
-        },
-        signal: AbortSignal.timeout(LIVE_DEV_UPSTREAM_TIMEOUT_MS),
-      })
+    for (let attemptIndex = 0; attemptIndex < maxAttemptsPerHost; attemptIndex += 1) {
+      try {
+        const upstreamResponse = await fetch(upstreamUrl, {
+          method: 'GET',
+          headers: {
+            accept: String(req.headers.accept || '*/*'),
+            'accept-language': String(req.headers['accept-language'] || ''),
+            'cache-control': String(req.headers['cache-control'] || ''),
+            pragma: String(req.headers.pragma || ''),
+            'user-agent': String(req.headers['user-agent'] || ''),
+          },
+          signal: AbortSignal.timeout(timeoutMs),
+        })
 
-      return { ok: true, upstreamResponse, upstreamUrl, upstreamHost: host }
-    } catch (error) {
-      errors.push(`${host}: ${error?.message || 'fetch failed'}`)
+        return { ok: true, upstreamResponse, upstreamUrl, upstreamHost: host }
+      } catch (error) {
+        const errorName = String(error?.name || '').toLowerCase()
+        const isTimeout = errorName === 'aborterror' || errorName === 'timeouterror'
+        errors.push(`${host}#${attemptIndex + 1}: ${error?.message || 'fetch failed'}`)
+        if (!isTimeout) {
+          break
+        }
+      }
     }
   }
 
@@ -9290,6 +9330,15 @@ io.on('connection', (socket) => {
       }
 
     ensureTerminalSessionWorkspace(session, workspaceDir)
+    const workspaceIntegrity = validateTerminalSessionWorkspace(session, workspaceDir)
+    if (!workspaceIntegrity.ok) {
+      socket.emit('terminal:error', {
+        projectId,
+        terminalId: normalizedTerminalId,
+        message: workspaceIntegrity.message,
+      })
+      return
+    }
 
     if (!session.shellProfile) {
       session.shellProfile = requestedShellProfile || 'default'
@@ -9361,6 +9410,17 @@ io.on('connection', (socket) => {
       childEnv.npm_config_include = 'dev'
       childEnv.NPM_CONFIG_PACKAGE_LOCK = 'true'
       childEnv.npm_config_package_lock = 'true'
+    }
+
+    const isDevServerCommand =
+      /^(npm|pnpm|yarn)\s+(run\s+)?dev(\s|$)/i.test(trimmedCommand) ||
+      /^(npx\s+)?next\s+dev(\s|$)/i.test(trimmedCommand) ||
+      /^vite(\s|$)/i.test(trimmedCommand)
+
+    if (isDevServerCommand) {
+      // Keep framework dev servers on a standard env value (Next.js warns on custom NODE_ENV).
+      childEnv.NODE_ENV = 'development'
+      childEnv.BABEL_ENV = 'development'
     }
 
     delete childEnv.PORT
@@ -9458,8 +9518,21 @@ io.on('connection', (socket) => {
     const normalizedTerminalId = String(terminalId || 'terminal-1')
     const terminalOwnerUserId = project.sharedTerminalEnabled ? project.ownerId : socket.userId
     const sessionKey = terminalSessionKey(terminalOwnerUserId, projectId, normalizedTerminalId)
+    const workspaceDir = getProjectTerminalWorkspace(project.id, terminalOwnerUserId)
     const session = terminalSessions.get(sessionKey)
     if (!session?.child || session.child.killed) return
+
+    const workspaceIntegrity = validateTerminalSessionWorkspace(session, workspaceDir)
+    if (!workspaceIntegrity.ok) {
+      socket.emit('terminal:error', {
+        projectId,
+        terminalId: normalizedTerminalId,
+        message: workspaceIntegrity.message,
+      })
+      return
+    }
+
+    terminalSessions.set(sessionKey, session)
     session.child.stdin.write(`${String(input ?? '')}\n`)
   })
 
@@ -9494,16 +9567,15 @@ io.on('connection', (socket) => {
         child: null,
       }
 
-    if (!isPathInsideWorkspace(workspaceDir, session.cwd)) {
-      session.cwd = workspaceDir
-    } else {
-      try {
-        if (!fs.existsSync(session.cwd) || !fs.statSync(session.cwd).isDirectory()) {
-          session.cwd = workspaceDir
-        }
-      } catch {
-        session.cwd = workspaceDir
-      }
+    const workspaceIntegrity = validateTerminalSessionWorkspace(session, workspaceDir)
+    if (!workspaceIntegrity.ok) {
+      if (typeof ack === 'function') ack({ suggestions: [] })
+      socket.emit('terminal:error', {
+        projectId,
+        terminalId: normalizedTerminalId,
+        message: workspaceIntegrity.message,
+      })
+      return
     }
 
     terminalSessions.set(sessionKey, session)
