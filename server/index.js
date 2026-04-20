@@ -188,6 +188,17 @@ const LIVE_DEV_UPSTREAM_BOOT_TIMEOUT_MS = Math.max(
   LIVE_DEV_UPSTREAM_TIMEOUT_MS,
   Number(process.env.LIVE_DEV_UPSTREAM_BOOT_TIMEOUT_MS || 180000),
 )
+const TERMINAL_MAX_ACTIVE_PROCESSES_PER_USER = Math.max(
+  1,
+  Number(process.env.TERMINAL_MAX_ACTIVE_PROCESSES_PER_USER || (process.env.NODE_ENV === 'production' ? 1 : 4)),
+)
+const TERMINAL_MAX_ACTIVE_PROCESSES_GLOBAL = Math.max(
+  1,
+  Number(process.env.TERMINAL_MAX_ACTIVE_PROCESSES_GLOBAL || (process.env.NODE_ENV === 'production' ? 1 : 8)),
+)
+const TERMINAL_DEV_SERVER_SINGLETON_PER_USER =
+  String(process.env.TERMINAL_DEV_SERVER_SINGLETON_PER_USER || (process.env.NODE_ENV === 'production' ? 'true' : 'false')).toLowerCase() !==
+  'false'
 let dbClient = null
 
 const scheduleProjectPersist = (projectId, delayMs = PROJECT_PERSIST_DEBOUNCE_MS) => {
@@ -3381,6 +3392,14 @@ const stopTerminalProcess = (session) => {
   const child = session?.child
   if (!child || child.killed) return Promise.resolve(false)
 
+  const clearSessionProcessState = () => {
+    if (!session || session.child !== child) return
+    session.child = null
+    session.activeCommand = ''
+    session.activeDevServerKind = ''
+    session.activeStartedAt = 0
+  }
+
   if (process.platform === 'win32') {
     return new Promise((resolve) => {
       const killer = spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
@@ -3390,20 +3409,61 @@ const stopTerminalProcess = (session) => {
 
       killer.on('error', () => resolve(false))
       killer.on('close', (code) => {
-        if (code === 0 && session.child === child) {
-          session.child = null
+        if (code === 0) {
+          clearSessionProcessState()
         }
         resolve(code === 0)
       })
     })
   }
 
-  try {
-    child.kill('SIGTERM')
-    return Promise.resolve(true)
-  } catch {
-    return Promise.resolve(false)
-  }
+  return new Promise((resolve) => {
+    let settled = false
+    let forceKillTimer = null
+
+    const finish = (ok) => {
+      if (settled) return
+      settled = true
+      if (forceKillTimer) {
+        clearTimeout(forceKillTimer)
+      }
+      child.off('close', handleClose)
+      if (ok) {
+        clearSessionProcessState()
+      }
+      resolve(Boolean(ok))
+    }
+
+    const handleClose = () => {
+      finish(true)
+    }
+
+    child.once('close', handleClose)
+
+    try {
+      child.kill('SIGTERM')
+    } catch {
+      finish(false)
+      return
+    }
+
+    forceKillTimer = setTimeout(() => {
+      if (child.killed) {
+        finish(true)
+        return
+      }
+
+      try {
+        child.kill('SIGKILL')
+      } catch {
+        finish(false)
+      }
+
+      setTimeout(() => {
+        finish(child.killed)
+      }, 1000)
+    }, 4000)
+  })
 }
 
 const getTerminalCwdDisplay = (workspaceDir, cwd) => {
@@ -8892,6 +8952,73 @@ const stopAllTerminalsForUserId = async (userId) => {
   }
 }
 
+const isTerminalDevServerCommandText = (value = '') => {
+  const commandText = String(value || '').trim()
+  if (!commandText) return false
+  return (
+    /^(npm|pnpm|yarn)\s+(run\s+)?dev(\s|$)/i.test(commandText) ||
+    /^(npx\s+)?next\s+dev(\s|$)/i.test(commandText) ||
+    /^vite(\s|$)/i.test(commandText)
+  )
+}
+
+const getRunningTerminalSessionsForOwner = (ownerUserId, { includeNonDev = true } = {}) => {
+  return Array.from(terminalSessions.values())
+    .filter((session) => {
+      if (!session) return false
+      if (String(session.ownerUserId || '') !== String(ownerUserId || '')) return false
+      if (!session.child || session.child.killed) return false
+      if (!includeNonDev && !isTerminalDevServerCommandText(session.activeCommand || '')) return false
+      return true
+    })
+    .sort((a, b) => Number(a.activeStartedAt || 0) - Number(b.activeStartedAt || 0))
+}
+
+const stopRunningDevServersForOwner = async (ownerUserId, { excludeSessionKey = '' } = {}) => {
+  const runningDevSessions = getRunningTerminalSessionsForOwner(ownerUserId, { includeNonDev: false })
+  for (const session of runningDevSessions) {
+    const sessionKey = terminalSessionKey(session.ownerUserId, session.projectId, session.terminalId)
+    if (excludeSessionKey && sessionKey === excludeSessionKey) continue
+    await stopTerminalProcess(session)
+  }
+}
+
+const enforceTerminalProcessLimitForOwner = async (ownerUserId, { keepSessionKey = '' } = {}) => {
+  const runningSessions = getRunningTerminalSessionsForOwner(ownerUserId, { includeNonDev: true })
+  if (runningSessions.length < TERMINAL_MAX_ACTIVE_PROCESSES_PER_USER) return
+
+  const toStopCount = runningSessions.length - TERMINAL_MAX_ACTIVE_PROCESSES_PER_USER + 1
+  let stopped = 0
+  for (const session of runningSessions) {
+    const sessionKey = terminalSessionKey(session.ownerUserId, session.projectId, session.terminalId)
+    if (keepSessionKey && sessionKey === keepSessionKey) continue
+    await stopTerminalProcess(session)
+    stopped += 1
+    if (stopped >= toStopCount) break
+  }
+}
+
+const getAllRunningTerminalSessions = () => {
+  return Array.from(terminalSessions.values())
+    .filter((session) => session && session.child && !session.child.killed)
+    .sort((a, b) => Number(a.activeStartedAt || 0) - Number(b.activeStartedAt || 0))
+}
+
+const enforceGlobalTerminalProcessLimit = async ({ keepSessionKey = '' } = {}) => {
+  const runningSessions = getAllRunningTerminalSessions()
+  if (runningSessions.length < TERMINAL_MAX_ACTIVE_PROCESSES_GLOBAL) return
+
+  const toStopCount = runningSessions.length - TERMINAL_MAX_ACTIVE_PROCESSES_GLOBAL + 1
+  let stopped = 0
+  for (const session of runningSessions) {
+    const sessionKey = terminalSessionKey(session.ownerUserId, session.projectId, session.terminalId)
+    if (keepSessionKey && sessionKey === keepSessionKey) continue
+    await stopTerminalProcess(session)
+    stopped += 1
+    if (stopped >= toStopCount) break
+  }
+}
+
 const emitTerminalEvent = (project, session, eventName, payload) => {
   const sharedOwnerTerminal = Boolean(project.sharedTerminalEnabled) && session.ownerUserId === project.ownerId
 
@@ -9483,7 +9610,7 @@ io.on('connection', (socket) => {
     }
   })
 
-  socket.on('terminal:run', ({ projectId, terminalId, command, shellProfile }) => {
+  socket.on('terminal:run', async ({ projectId, terminalId, command, shellProfile }) => {
     const { project, error } = assertProjectMembership(projectId, socket.userId)
     if (error) {
       socket.emit('terminal:error', { projectId, terminalId, message: error.message })
@@ -9605,7 +9732,7 @@ io.on('connection', (socket) => {
       return
     }
 
-    const shell = getShellForCommand(trimmedCommand, session.shellProfile)
+    let commandToRun = trimmedCommand
     const childEnv = {
       ...process.env,
       FORCE_COLOR: '0',
@@ -9647,22 +9774,35 @@ io.on('connection', (socket) => {
     const isNextDevCommand = isDirectNextDevCommand || /\bnext\s+dev\b/i.test(workspaceDevScript)
 
     if (isNextDevCommand) {
-      const conflictingNextSession = Array.from(terminalSessions.values()).find((candidate) => {
-        if (!candidate || candidate === session) return false
-        if (String(candidate.projectId || '') !== String(projectId || '')) return false
-        if (String(candidate.ownerUserId || '') !== String(terminalOwnerUserId || '')) return false
-        if (!candidate.child || candidate.child.killed) return false
-        return String(candidate.activeDevServerKind || '') === 'next'
-      })
-
-      if (conflictingNextSession) {
-        socket.emit('terminal:error', {
-          projectId,
-          terminalId: normalizedTerminalId,
-          message: `Next dev server is already running in ${String(conflictingNextSession.terminalId || 'another terminal')}. Stop it before starting another one to avoid memory crashes.`,
-        })
-        return
+      const hasWebpackFlag = /(^|\s)--webpack(\s|$)/i.test(commandToRun)
+      const hasHostFlag = /(^|\s)(-H|--hostname)(\s|=)/i.test(commandToRun)
+      if (isDirectNextDevCommand) {
+        if (!hasWebpackFlag) {
+          commandToRun = `${commandToRun} --webpack`
+        }
+        if (!hasHostFlag) {
+          commandToRun = `${commandToRun} --hostname 127.0.0.1`
+        }
+      } else if (isPackageManagerDevCommand && /\bnext\s+dev\b/i.test(workspaceDevScript)) {
+        commandToRun = 'npx next dev --webpack --hostname 127.0.0.1'
       }
+    }
+
+    const shell = getShellForCommand(commandToRun, session.shellProfile)
+
+    try {
+      if (isDevServerCommand && TERMINAL_DEV_SERVER_SINGLETON_PER_USER) {
+        await stopRunningDevServersForOwner(terminalOwnerUserId, { excludeSessionKey: sessionKey })
+      }
+      await enforceTerminalProcessLimitForOwner(terminalOwnerUserId, { keepSessionKey: sessionKey })
+      await enforceGlobalTerminalProcessLimit({ keepSessionKey: sessionKey })
+    } catch (limitError) {
+      socket.emit('terminal:error', {
+        projectId,
+        terminalId: normalizedTerminalId,
+        message: `Unable to prepare terminal process capacity: ${limitError?.message || 'Unknown error'}`,
+      })
+      return
     }
 
     if (isDevServerCommand) {
@@ -9690,12 +9830,14 @@ io.on('connection', (socket) => {
     session.child = child
   session.activeCommand = trimmedCommand
   session.activeDevServerKind = isNextDevCommand ? 'next' : isDevServerCommand ? 'other' : ''
+    session.activeStartedAt = Date.now()
     terminalSessions.set(sessionKey, session)
 
     emitTerminalEvent(project, session, 'terminal:started', {
       projectId,
       terminalId: normalizedTerminalId,
       command: trimmedCommand,
+      effectiveCommand: commandToRun,
       shellProfile: session.shellProfile,
       cwd: session.cwd,
       cwdDisplay: getTerminalCwdDisplay(workspaceDir, session.cwd),
@@ -9734,6 +9876,7 @@ io.on('connection', (socket) => {
         active.child = null
         active.activeCommand = ''
         active.activeDevServerKind = ''
+        active.activeStartedAt = 0
       }
       emitTerminalEvent(project, session, 'terminal:error', {
         projectId,
@@ -9748,6 +9891,7 @@ io.on('connection', (socket) => {
         active.child = null
         active.activeCommand = ''
         active.activeDevServerKind = ''
+        active.activeStartedAt = 0
       }
       try {
         syncProjectFilesFromWorkspace(project, session.workspaceDir)
