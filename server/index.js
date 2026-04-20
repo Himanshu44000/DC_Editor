@@ -4073,11 +4073,11 @@ const fetchLiveDevUpstream = async ({ session, targetPath, req }) => {
   const isBootstrapRequest =
     normalizedPath === '/' || normalizedPath === '/index.html' || acceptHeader.includes('text/html')
   const perAttemptTimeoutMs = isBootstrapRequest
-    ? Math.max(30000, Math.min(60000, LIVE_DEV_UPSTREAM_BOOT_TIMEOUT_MS))
+    ? Math.max(8000, Math.min(15000, LIVE_DEV_UPSTREAM_TIMEOUT_MS))
     : LIVE_DEV_UPSTREAM_TIMEOUT_MS
 
   const hostCandidates = buildLoopbackHostCandidates(session?.hostname)
-  const candidateHosts = isBootstrapRequest ? hostCandidates.slice(0, 3) : hostCandidates
+  const candidateHosts = isBootstrapRequest ? hostCandidates.slice(0, 6) : hostCandidates
   const errors = []
   const pushError = (message) => {
     errors.push(String(message || 'fetch failed'))
@@ -4110,8 +4110,72 @@ const fetchLiveDevUpstream = async ({ session, targetPath, req }) => {
 
   return {
     ok: false,
+    isBootstrapRequest,
     errorMessage: errors.join(' | ') || 'fetch failed',
   }
+}
+
+const buildLiveDevWarmupHtml = ({ sessionId, routePrefix = '/api/live-dev', message = '' }) => {
+  const normalizedPrefix = String(routePrefix || '/api/live-dev').startsWith('/')
+    ? String(routePrefix || '/api/live-dev')
+    : `/${String(routePrefix || 'api/live-dev')}`
+  const sessionPath = `${normalizedPrefix}/${String(sessionId || '')}/`
+  const statusText = String(message || '').trim()
+
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta http-equiv="cache-control" content="no-store" />
+    <title>Starting preview...</title>
+    <style>
+      body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; background: #0b1220; color: #e2e8f0; }
+      .wrap { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+      .card { width: min(680px, 94vw); background: rgba(15, 23, 42, 0.88); border: 1px solid rgba(148, 163, 184, 0.25); border-radius: 14px; padding: 20px; }
+      h1 { margin: 0 0 10px; font-size: 20px; }
+      p { margin: 0; opacity: 0.9; }
+      .meta { margin-top: 12px; font-size: 12px; color: #94a3b8; word-break: break-word; }
+      .dot { display: inline-block; width: 8px; height: 8px; border-radius: 999px; background: #22c55e; margin-right: 8px; animation: pulse 1.2s infinite; }
+      @keyframes pulse { 0% { transform: scale(0.9); opacity: 0.6; } 50% { transform: scale(1.2); opacity: 1; } 100% { transform: scale(0.9); opacity: 0.6; } }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="card">
+        <h1><span class="dot"></span>Preparing live preview</h1>
+        <p>The dev server is compiling the first page. This page will refresh automatically.</p>
+        <div class="meta">Session: ${String(sessionId || '')}</div>
+        <div class="meta">${statusText ? statusText.replace(/</g, '&lt;').replace(/>/g, '&gt;') : 'Waiting for initial compile...'}</div>
+      </div>
+    </div>
+    <script>
+      (() => {
+        const target = ${JSON.stringify(sessionPath)};
+        const tick = () => {
+          fetch(target, { cache: 'no-store', headers: { accept: 'text/html' } })
+            .then((res) => {
+              if (!res.ok) throw new Error(String(res.status || 'fetch_failed'));
+              return res.text();
+            })
+            .then((html) => {
+              if (/Preparing live preview/i.test(html)) {
+                setTimeout(tick, 1500);
+                return;
+              }
+              document.open();
+              document.write(html);
+              document.close();
+            })
+            .catch(() => {
+              setTimeout(tick, 2000);
+            });
+        };
+        setTimeout(tick, 1200);
+      })();
+    </script>
+  </body>
+</html>`
 }
 
 const buildWebSocketProxyRequest = (req, upstreamPath, host, port, protocol = 'http:') => {
@@ -4213,6 +4277,20 @@ const serveLiveDevPath = async (req, res, { sessionId, suffix = '', routePrefix 
     })
 
     if (!upstream.ok) {
+      const isBootstrapPath = !trimmedSuffix || trimmedSuffix === 'index.html'
+      const timeoutLike = /timed out|timeout|aborted/i.test(String(upstream.errorMessage || ''))
+      if (isBootstrapPath && timeoutLike) {
+        res.status(200)
+        res.setHeader('Content-Type', 'text/html; charset=utf-8')
+        return res.send(
+          buildLiveDevWarmupHtml({
+            sessionId,
+            routePrefix,
+            message: String(upstream.errorMessage || ''),
+          }),
+        )
+      }
+
       return res.status(502).send(`Live dev proxy failed: ${upstream.errorMessage || 'fetch failed'}`)
     }
 
