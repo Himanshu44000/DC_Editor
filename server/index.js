@@ -3822,8 +3822,8 @@ const parseLoopbackTargetUrl = (rawUrl = '') => {
   }
 
   const hostname = String(parsed.hostname || '').toLowerCase()
-  if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
-    return { ok: false, message: 'Only localhost preview URLs are supported' }
+  if (!isAllowedLiveDevHost(hostname)) {
+    return { ok: false, message: 'Only localhost or server-local interface preview URLs are supported' }
   }
 
   const port = Number(parsed.port || (protocol === 'https:' ? 443 : 80))
@@ -3845,18 +3845,78 @@ const normalizeLoopbackHost = (value = '') => {
   return normalized
 }
 
+const isPrivateIpv4Host = (value = '') => {
+  const parts = String(value || '')
+    .trim()
+    .split('.')
+    .map((part) => Number(part))
+
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+    return false
+  }
+
+  const [a, b] = parts
+  if (a === 10) return true
+  if (a === 127) return true
+  if (a === 0) return true
+  if (a === 192 && b === 168) return true
+  if (a === 172 && b >= 16 && b <= 31) return true
+  return false
+}
+
+const getLocalInterfaceHostSet = () => {
+  const hosts = new Set(['localhost', '127.0.0.1', '::1'])
+
+  try {
+    const interfaces = os.networkInterfaces()
+    for (const entries of Object.values(interfaces || {})) {
+      for (const entry of entries || []) {
+        const address = normalizeLoopbackHost(entry?.address || '')
+        if (!address) continue
+
+        const family = String(entry?.family || '').toLowerCase()
+        const isIPv4 = family === 'ipv4' || family === '4'
+        const isIPv6 = family === 'ipv6' || family === '6'
+
+        if (!isIPv4 && !isIPv6) continue
+        hosts.add(address)
+      }
+    }
+  } catch {
+    // Ignore interface lookup errors and rely on loopback fallbacks.
+  }
+
+  return hosts
+}
+
+const isAllowedLiveDevHost = (value = '') => {
+  const normalized = normalizeLoopbackHost(value)
+  if (!normalized) return false
+  if (normalized === 'localhost' || normalized === '127.0.0.1' || normalized === '::1') return true
+
+  const localHosts = getLocalInterfaceHostSet()
+  if (localHosts.has(normalized)) return true
+  if (isPrivateIpv4Host(normalized) && localHosts.has(normalized)) return true
+  return false
+}
+
 const buildLoopbackHostCandidates = (preferredHost = '') => {
   const candidates = []
+  const localHosts = Array.from(getLocalInterfaceHostSet())
+
   const pushHost = (value) => {
     const normalized = normalizeLoopbackHost(value)
     if (!normalized) return
-    if (!['localhost', '127.0.0.1', '::1'].includes(normalized)) return
+    if (!isAllowedLiveDevHost(normalized)) return
     if (!candidates.includes(normalized)) {
       candidates.push(normalized)
     }
   }
 
   pushHost(preferredHost)
+  for (const host of localHosts) {
+    pushHost(host)
+  }
   pushHost('localhost')
   pushHost('127.0.0.1')
   pushHost('::1')

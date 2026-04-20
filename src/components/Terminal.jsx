@@ -208,12 +208,6 @@ const Terminal = ({ projectId, projectName, token, userId, ownerId, sharedTermin
       return
     }
 
-    const normalizedProtocol = String(parsedUrl.protocol || '').toLowerCase() === 'https:' ? 'https:' : 'http:'
-    const normalizedPort = String(parsedUrl.port || (normalizedProtocol === 'https:' ? '443' : '80'))
-    const normalizedTargetUrl = isLoopback
-      ? rawValue
-      : `${normalizedProtocol}//localhost:${normalizedPort}${parsedUrl.pathname || '/'}${parsedUrl.search || ''}`
-
     event.preventDefault()
 
     const previewTab = window.open('about:blank', '_blank')
@@ -233,7 +227,7 @@ const Terminal = ({ projectId, projectName, token, userId, ownerId, sharedTermin
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ url: normalizedTargetUrl }),
+        body: JSON.stringify({ url: rawValue }),
       })
 
       const payload = await response.json().catch(() => ({}))
