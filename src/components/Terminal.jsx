@@ -32,6 +32,25 @@ const stripAnsi = (text = '') => {
 
 const URL_REGEX = /(https?:\/\/[^\s]+)/g
 
+const isPrivateIpv4Host = (host = '') => {
+  const parts = String(host || '')
+    .trim()
+    .split('.')
+    .map((part) => Number(part))
+
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+    return false
+  }
+
+  const [a, b] = parts
+  if (a === 10) return true
+  if (a === 127) return true
+  if (a === 0) return true
+  if (a === 192 && b === 168) return true
+  if (a === 172 && b >= 16 && b <= 31) return true
+  return false
+}
+
 const isWindowsHost = typeof navigator !== 'undefined' && /Win/i.test(String(navigator.platform || ''))
 
 const TERMINAL_PROFILES = isWindowsHost
@@ -183,10 +202,17 @@ const Terminal = ({ projectId, projectName, token, userId, ownerId, sharedTermin
     }
 
     const hostname = String(parsedUrl.hostname || '').toLowerCase()
-    const isLoopback = hostname === 'localhost' || hostname === '127.0.0.1'
-    if (!isLoopback) {
+    const isLoopback = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1'
+    const isPrivateNetworkHost = isPrivateIpv4Host(hostname)
+    if (!isLoopback && !isPrivateNetworkHost) {
       return
     }
+
+    const normalizedProtocol = String(parsedUrl.protocol || '').toLowerCase() === 'https:' ? 'https:' : 'http:'
+    const normalizedPort = String(parsedUrl.port || (normalizedProtocol === 'https:' ? '443' : '80'))
+    const normalizedTargetUrl = isLoopback
+      ? rawValue
+      : `${normalizedProtocol}//localhost:${normalizedPort}${parsedUrl.pathname || '/'}${parsedUrl.search || ''}`
 
     event.preventDefault()
 
@@ -207,7 +233,7 @@ const Terminal = ({ projectId, projectName, token, userId, ownerId, sharedTermin
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ url: rawValue }),
+        body: JSON.stringify({ url: normalizedTargetUrl }),
       })
 
       const payload = await response.json().catch(() => ({}))
